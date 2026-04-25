@@ -3,7 +3,16 @@
 
 JUCE_IMPLEMENT_SINGLETON (SharedAnalyserState)
 
-SharedAnalyserState::SharedAnalyserState() {}
+static constexpr juce::uint32 kDefaultColours[SharedAnalyserState::kMaxTracks] = {
+    0xff00BCD4, 0xff8BC34A, 0xffFFC107, 0xff9C27B0,
+    0xffE91E63, 0xff009688, 0xff3F51B5, 0xffFF5722,
+};
+
+SharedAnalyserState::SharedAnalyserState()
+{
+    for (int i = 0; i < kMaxTracks; ++i)
+        colours_[i] = juce::Colour(kDefaultColours[i]);
+}
 
 int SharedAnalyserState::registerProcessor (MixSuiteProcessor* proc)
 {
@@ -36,15 +45,13 @@ SharedAnalyserState::getProcessors() const
 
 juce::Colour SharedAnalyserState::trackColour (int slot)
 {
-    static const juce::Colour colours[kMaxTracks] = {
-        juce::Colour(0xff00BCD4),  // cyan
-        juce::Colour(0xff8BC34A),  // lime
-        juce::Colour(0xffFFC107),  // amber
-        juce::Colour(0xff9C27B0),  // purple
-        juce::Colour(0xffE91E63),  // pink
-        juce::Colour(0xff009688),  // teal
-        juce::Colour(0xff3F51B5),  // indigo
-        juce::Colour(0xffFF5722),  // deep orange
-    };
-    return colours[juce::jlimit(0, kMaxTracks - 1, slot)];
+    if (auto* inst = getInstance())
+        return inst->colours_[juce::jlimit(0, kMaxTracks - 1, slot)];
+    return juce::Colour(kDefaultColours[juce::jlimit(0, kMaxTracks - 1, slot)]);
+}
+
+void SharedAnalyserState::setTrackColour (int slot, juce::Colour colour)
+{
+    if (slot >= 0 && slot < kMaxTracks)
+        colours_[slot] = colour;
 }

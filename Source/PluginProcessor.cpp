@@ -187,8 +187,9 @@ void MixSuiteProcessor::getStateInformation (juce::MemoryBlock& dest)
     spatXml->setAttribute("label",     trackState_.label);
     spatXml->setAttribute("priority",  trackState_.priority);
     spatXml->setAttribute("isPanMode", trackState_.mode == TrackState::Mode::Pan ? 1 : 0);
-    spatXml->setAttribute("eqEnabled",     eqEnabled_     ? 1 : 0);
+    spatXml->setAttribute("eqEnabled",      eqEnabled_      ? 1 : 0);
     spatXml->setAttribute("spatialEnabled", spatialEnabled_ ? 1 : 0);
+    spatXml->setAttribute("trackColourARGB", (int)SharedAnalyserState::trackColour(slotIndex_).getARGB());
 
     copyXmlToBinary(root, dest);
 }
@@ -215,8 +216,11 @@ void MixSuiteProcessor::setStateInformation (const void* data, int size)
         trackState_.priority   =        s->getIntAttribute   ("priority", 0);
         trackState_.mode       = s->getIntAttribute("isPanMode", 0)
                                ? TrackState::Mode::Pan : TrackState::Mode::Stereo;
-        eqEnabled_             = s->getIntAttribute("eqEnabled",      1) != 0;
-        spatialEnabled_        = s->getIntAttribute("spatialEnabled", 1) != 0;
+        eqEnabled_      = s->getIntAttribute("eqEnabled",      1) != 0;
+        spatialEnabled_ = s->getIntAttribute("spatialEnabled", 1) != 0;
+        int colourARGB  = s->getIntAttribute("trackColourARGB", -1);
+        if (colourARGB != -1 && slotIndex_ >= 0)
+            SharedAnalyserState::getInstance()->setTrackColour(slotIndex_, juce::Colour((juce::uint32)colourARGB));
         pushSpatialParams();
     }
 }

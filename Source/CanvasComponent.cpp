@@ -1,6 +1,7 @@
 #include "CanvasComponent.h"
 #include "PluginProcessor.h"
 #include "SharedMixerState.h"
+#include "SharedAnalyserState.h"
 
 static juce::Colour bandColour (int band)
 {
@@ -392,6 +393,8 @@ void CanvasComponent::mouseDown (const juce::MouseEvent& e)
             menu.addItem(3, "Reset Priority");
         menu.addSeparator();
         menu.addItem(4, isCurrentlyPan ? "Switch to Stereo Widening" : "Switch to Pan Mode");
+        menu.addSeparator();
+        menu.addItem(5, "Change Colour...");
 
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
             [this, idx, currentPriority, isCurrentlyPan] (int result)
@@ -405,6 +408,12 @@ void CanvasComponent::mouseDown (const juce::MouseEvent& e)
                 else if (result == 4)
                     SharedMixerState::getInstance()->setMode(
                         idx, isCurrentlyPan ? TrackState::Mode::Stereo : TrackState::Mode::Pan);
+                else if (result == 5)
+                {
+                    auto picker = std::make_unique<TrackColourPicker>(idx, [this] { repaint(); });
+                    juce::CallOutBox::launchAsynchronously(std::move(picker),
+                        getScreenBounds(), nullptr);
+                }
             });
         return;
     }

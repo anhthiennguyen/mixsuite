@@ -327,6 +327,15 @@ int EQComponent::bandAtPoint (juce::Point<float> pt, float w, float h) const
 
 void EQComponent::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isRightButtonDown())
+    {
+        int slot = proc_.getSlotIndex();
+        if (slot < 0) return;
+        auto picker = std::make_unique<TrackColourPicker>(slot, [this] { repaint(); });
+        auto anchor = juce::Rectangle<int>(localPointToGlobal(e.getPosition()), juce::Point<int>());
+        juce::CallOutBox::launchAsynchronously(std::move(picker), anchor, nullptr);
+        return;
+    }
     draggedBand_ = bandAtPoint(e.position, (float)getWidth(), (float)(getHeight() - 20));
     repaint();
 }

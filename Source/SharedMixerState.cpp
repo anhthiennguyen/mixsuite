@@ -1,4 +1,5 @@
 #include "SharedMixerState.h"
+#include "SharedAnalyserState.h"
 #include "PluginProcessor.h"
 
 JUCE_IMPLEMENT_SINGLETON (SharedMixerState)
@@ -222,15 +223,5 @@ StereoScope* SharedMixerState::getStereoScope (int slot)
 //==============================================================================
 juce::Colour SharedMixerState::trackColour (int slot)
 {
-    static const juce::Colour colours[kMaxTracks] = {
-        juce::Colour(0xffE53935),
-        juce::Colour(0xff1E88E5),
-        juce::Colour(0xff43A047),
-        juce::Colour(0xffFB8C00),
-        juce::Colour(0xff8E24AA),
-        juce::Colour(0xff00ACC1),
-        juce::Colour(0xffF9A825),
-        juce::Colour(0xffE64A19),
-    };
-    return colours[juce::jlimit(0, kMaxTracks - 1, slot)];
+    return SharedAnalyserState::trackColour(slot);
 }
