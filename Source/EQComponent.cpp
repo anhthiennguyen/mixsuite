@@ -14,13 +14,23 @@ static const juce::Colour kBandColours[kNumEQBands] = {
 
 EQComponent::EQComponent (MixSuiteProcessor& proc) : proc_(proc)
 {
-    autoEqBtn_.setButtonText("CLEAN");
-    autoEqBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff0f1e2d));
-    autoEqBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff29b6f6));
-    autoEqBtn_.setColour(juce::TextButton::textColourOffId,  juce::Colour(0xff29b6f6).withAlpha(0.85f));
-    autoEqBtn_.setColour(juce::TextButton::textColourOnId,   juce::Colours::white);
-    autoEqBtn_.onClick = [this] { runAutoEQ(); };
+    auto setupBtn = [](juce::TextButton& btn, const char* label, juce::Colour accent)
+    {
+        btn.setButtonText(label);
+        btn.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff0f1e2d));
+        btn.setColour(juce::TextButton::buttonOnColourId, accent);
+        btn.setColour(juce::TextButton::textColourOffId,  accent.withAlpha(0.85f));
+        btn.setColour(juce::TextButton::textColourOnId,   juce::Colours::white);
+    };
+
+    setupBtn(autoEqBtn_,    "CLEAN",       juce::Colour(0xff29b6f6));
+    setupBtn(extraCleanBtn_, "EXTRA CLEAN", juce::Colour(0xff26c6da));
+
+    autoEqBtn_.onClick    = [this] { runAutoEQ();    };
+    extraCleanBtn_.onClick = [this] { runExtraClean(); };
+
     addAndMakeVisible(autoEqBtn_);
+    addAndMakeVisible(extraCleanBtn_);
 
     startTimerHz(30);
 }
@@ -511,8 +521,11 @@ void EQComponent::resized()
     constexpr int kPanelW = 230;
     constexpr int kBtnH   = 22;
     constexpr int kBtnY   = 10 + 90;  // below worst-case 3-hint panel
-    int btnX = getWidth() - kPanelW - 10;
-    autoEqBtn_.setBounds(btnX, kBtnY, kPanelW, kBtnH);
+    constexpr int kGap = 4;
+    int btnX  = getWidth() - kPanelW - 10;
+    int halfW = (kPanelW - kGap) / 2;
+    autoEqBtn_   .setBounds(btnX,                  kBtnY, halfW,                    kBtnH);
+    extraCleanBtn_.setBounds(btnX + halfW + kGap,  kBtnY, kPanelW - halfW - kGap,  kBtnH);
 }
 
 //==============================================================================
@@ -762,40 +775,64 @@ void EQComponent::runAutoEQ()
         setParam("band4_enabled", 1.0f);
     }
 
-    // ── Bands 1-3: surgical notches at narrow resonant bumps ─────────────────
+    repaint();
+}
+
+//==============================================================================
+void EQComponent::runExtraClean()
+{
+    // Step 1: run the standard HP/LP clean first
+    runAutoEQ();
+
+    // Step 2: surgical notches in the "thin spaces between main content"
     //
-    // A "thin unnecessary space" is a narrow frequency region that sticks up
-    // above its local neighbourhood — energy that sits between the main content
-    // peaks and contributes nothing to the perceived sound.  We find these by
-    // comparing each 1/3-octave band against the 2-octave average centred on
-    // the same frequency.  If the narrow band is notably louder than its
-    // surroundings, it is a candidate for a tight notch cut.
-    //
-    // Cuts are kept mild (≤ –8 dB) and narrow (Q ≈ 2.5) so they are
-    // perceptually transparent — they only clip the tip of the bump.
+    // We compare each 1/3-octave band against the 2-octave neighbourhood.
+    // A bump that is > 3.5 dB above its surroundings but NOT in the main
+    // body of the signal (excluded if within 6 dB of the loudest level)
+    // is an unnecessary resonance.  A tight notch (Q 2.5, ≤ –8 dB) clips
+    // only the tip — perceptually transparent, spectrally cleaner.
+
+    auto& sa  = proc_.getHintsAnalyser();
+    double sr = sa.getSampleRate();
+    if (sr < 1.0) return;
+
+    const auto& sp  = sa.getSpectrum();
+    float binHz = (float)sr / (float)SpectrumAnalyser::fftSize;
+
+    auto avgDb = [&](float lo, float hi) -> float
+    {
+        int binLo = juce::jmax(1, (int)(lo / binHz));
+        int binHi = juce::jmin(SpectrumAnalyser::numBins - 1, (int)(hi / binHz));
+        if (binLo >= binHi) return -100.0f;
+        double sum = 0.0; int cnt = 0;
+        for (int i = binLo; i <= binHi; ++i)
+        { sum += (double)juce::Decibels::decibelsToGain(sp[i], -100.0f); ++cnt; }
+        return cnt > 0 ? juce::Decibels::gainToDecibels((float)(sum / cnt), -100.0f) : -100.0f;
+    };
+
+    float ref        = avgDb(500.0f, 5000.0f);
+    float noiseFloor = ref - 18.0f;
+
+    auto& apvts = proc_.getAPVTS();
+    auto setParam = [&](const juce::String& id, float val) {
+        if (auto* p = apvts.getParameter(id))
+            p->setValueNotifyingHost(p->convertTo0to1(val));
+    };
 
     struct Candidate { float freq; float excess; };
     std::vector<Candidate> candidates;
 
-    // Sweep from 80 Hz to 12 kHz in ~1/6-octave steps
-    for (float fc = 80.0f; fc < 12000.0f; fc *= 1.122f)   // 1.122 ≈ 2^(1/6)
+    for (float fc = 80.0f; fc < 12000.0f; fc *= 1.122f)
     {
-        float narrow = avgDb(fc / 1.15f, fc * 1.15f);      // ±1/3 oct around fc
-        float wide   = avgDb(fc / 2.83f, fc * 2.83f);      // ±1.5 oct around fc
-
-        // Only consider frequencies with some real signal
+        float narrow = avgDb(fc / 1.15f, fc * 1.15f);
+        float wide   = avgDb(fc / 2.83f, fc * 2.83f);
         if (narrow < noiseFloor + 4.0f) continue;
-
-        // Don't touch anything close to the loudest content (main body of sound)
         if (narrow > ref - 6.0f) continue;
-
         float excess = narrow - wide;
         if (excess > 3.5f)
             candidates.push_back({ fc, excess });
     }
 
-    // Keep only the three most prominent bumps, spread across the spectrum
-    // (suppress candidates within a half-octave of a stronger one)
     std::sort(candidates.begin(), candidates.end(),
               [](const Candidate& a, const Candidate& b){ return a.excess > b.excess; });
 
@@ -809,13 +846,12 @@ void EQComponent::runAutoEQ()
         if ((int)chosen.size() == 3) break;
     }
 
-    // Reset notch results from last run
     for (auto& n : lastNotches_) n = {};
 
     for (int i = 0; i < (int)chosen.size(); ++i)
     {
-        int   band     = i + 1;   // bands 1, 2, 3
-        float gainDb   = juce::jlimit(-8.0f, -2.0f, -chosen[i].excess * 0.65f);
+        int   band   = i + 1;
+        float gainDb = juce::jlimit(-8.0f, -2.0f, -chosen[i].excess * 0.65f);
         juce::String b = "band" + juce::String(band) + "_";
         setParam(b + "freq",    chosen[i].freq);
         setParam(b + "gain",    gainDb);

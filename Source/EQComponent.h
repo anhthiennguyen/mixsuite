@@ -60,9 +60,11 @@ private:
     void drawAnalysisPanel (juce::Graphics&, float w, float h) const;
 
     juce::TextButton autoEqBtn_;
-    void runAutoEQ();
+    juce::TextButton extraCleanBtn_;
+    void runAutoEQ();       // HP/LP shelf cuts only
+    void runExtraClean();   // HP/LP + surgical notch cuts
 
-    // Extra-clean: surgical notch results shown in the analysis panel
+    // Surgical notch results shown in the analysis panel after runExtraClean()
     struct NotchResult { float freq = 0.0f; float gainDb = 0.0f; bool active = false; };
     std::array<NotchResult, 3> lastNotches_;
 
