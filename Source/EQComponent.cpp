@@ -728,7 +728,6 @@ void EQComponent::runAutoEQ()
     const auto& sp  = sa.getSpectrum();
     float binHz = (float)sr / (float)SpectrumAnalyser::fftSize;
 
-    // Average linear power over a range, returned in dB
     auto avgDb = [&](float lo, float hi) -> float
     {
         int binLo = juce::jmax(1, (int)(lo / binHz));
@@ -745,10 +744,15 @@ void EQComponent::runAutoEQ()
 
     float noiseFloor = ref - 18.0f;
 
-    auto& apvts = proc_.getAPVTS();
-    auto setParam = [&](const juce::String& id, float val) {
+    // Compute parameter values synchronously from the current spectrum snapshot,
+    // then apply them asynchronously to avoid re-entering any host-held lock.
+    using Chg = std::pair<juce::String, float>;  // param id → normalised value
+    auto changes = std::make_shared<std::vector<Chg>>();
+    auto& apvts  = proc_.getAPVTS();
+
+    auto queue = [&](const juce::String& id, float val) {
         if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(p->convertTo0to1(val));
+            changes->push_back({ id, p->convertTo0to1(val) });
     };
 
     // ── Band 0: low-shelf HP ────────────────────────────────────────────────
@@ -758,9 +762,9 @@ void EQComponent::runAutoEQ()
 
     if (hpFreq > 40.0f)
     {
-        setParam("band0_freq",    juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f));
-        setParam("band0_gain",    -15.0f);
-        setParam("band0_enabled", 1.0f);
+        queue("band0_freq",    juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f));
+        queue("band0_gain",    -15.0f);
+        queue("band0_enabled", 1.0f);
     }
 
     // ── Band 4: high-shelf LP ────────────────────────────────────────────────
@@ -770,38 +774,29 @@ void EQComponent::runAutoEQ()
 
     if (lpFreq > 0.0f && lpFreq < 17000.0f)
     {
-        setParam("band4_freq",    juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f));
-        setParam("band4_gain",    -15.0f);
-        setParam("band4_enabled", 1.0f);
+        queue("band4_freq",    juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f));
+        queue("band4_gain",    -15.0f);
+        queue("band4_enabled", 1.0f);
     }
 
-    repaint();
+    juce::Component::SafePointer<EQComponent> safe(this);
+    juce::MessageManager::callAsync([safe, changes]()
+    {
+        if (!safe) return;
+        auto& apvts2 = safe->proc_.getAPVTS();
+        for (auto& [id, norm] : *changes)
+            if (auto* p = apvts2.getParameter(id))
+                p->setValueNotifyingHost(norm);
+        safe->repaint();
+    });
 }
 
 //==============================================================================
 void EQComponent::runExtraClean()
 {
-    // Step 1: HP/LP shelves (bands 0 and 4)
-    runAutoEQ();
-
-    // Step 2: fill all 14 remaining slots (bands 1,2,3 and 5-15) with tight
-    // surgical notches spread across the spectrum.  Goal: use every slot so
-    // each cut is as small and transparent as possible while collectively
-    // removing accumulated muddiness and resonances.
-    //
-    // Algorithm:
-    //  a) Scan 60 Hz – 16 kHz in 1/6-octave steps.  For each centre freq,
-    //     compare a narrow window (±0.15 oct) against a wide reference
-    //     (±1.5 oct) to detect bumps.  Also record absolute level so we can
-    //     rank by energy even when excess is low.
-    //  b) Sort candidates by excess (highest first); accept candidates with
-    //     quarter-octave spacing between chosen cuts.
-    //  c) If fewer than 14 candidates are found, pad remaining slots by
-    //     dividing the 60 Hz – 16 kHz range into evenly-spaced regions and
-    //     placing a very gentle cut (-1.5 dB, Q 4.0) at the highest-energy
-    //     frequency in each un-covered region.
-    //  d) All resonance cuts use Q 3.5, gain -2 to -9 dB.
-    //     Padding fills use Q 4.0, gain -1.5 dB.
+    // All spectrum analysis runs synchronously from the current snapshot.
+    // Parameter writes are collected here and applied in one callAsync batch,
+    // keeping us safely out of any host-held lock when setValueNotifyingHost fires.
 
     auto& sa  = proc_.getHintsAnalyser();
     double sr = sa.getSampleRate();
@@ -822,7 +817,6 @@ void EQComponent::runExtraClean()
         return cnt > 0 ? juce::Decibels::gainToDecibels((float)(sum / cnt), -100.0f) : -100.0f;
     };
 
-    // Peak frequency in range (linear sweep, returns centre of loudest bin)
     auto peakFreqIn = [&](float lo, float hi) -> float
     {
         int binLo = juce::jmax(1, (int)(lo / binHz));
@@ -836,34 +830,56 @@ void EQComponent::runExtraClean()
 
     float ref        = avgDb(500.0f, 5000.0f);
     float noiseFloor = ref - 20.0f;
+    if (ref < -50.0f) return;
 
-    auto& apvts = proc_.getAPVTS();
-    auto setParam = [&](const juce::String& id, float val) {
+    using Chg = std::pair<juce::String, float>;  // param id → normalised value
+    auto changes = std::make_shared<std::vector<Chg>>();
+    auto& apvts  = proc_.getAPVTS();
+
+    auto queue = [&](const juce::String& id, float val) {
         if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(p->convertTo0to1(val));
+            changes->push_back({ id, p->convertTo0to1(val) });
     };
 
-    static constexpr int kNotchSlots = 14;  // bands 1,2,3 and 5-15
+    // ── Bands 0 & 4: HP/LP shelves (same logic as runAutoEQ) ────────────────
+    float hpFreq = -1.0f;
+    for (float f = 20.0f; f < 500.0f; f *= 1.2f)
+        if (avgDb(f, f * 1.2f) > noiseFloor) { hpFreq = f; break; }
+    if (hpFreq > 40.0f)
+    {
+        queue("band0_freq",    juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f));
+        queue("band0_gain",    -15.0f);
+        queue("band0_enabled", 1.0f);
+    }
+
+    float lpFreq = -1.0f;
+    for (float f = 20000.0f; f > 2000.0f; f /= 1.2f)
+        if (avgDb(f / 1.2f, f) > noiseFloor) { lpFreq = f; break; }
+    if (lpFreq > 0.0f && lpFreq < 17000.0f)
+    {
+        queue("band4_freq",    juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f));
+        queue("band4_gain",    -15.0f);
+        queue("band4_enabled", 1.0f);
+    }
+
+    // ── Bands 1,2,3 + 5-15: 14 surgical notches ─────────────────────────────
+    static constexpr int kNotchSlots = 14;
 
     struct Candidate { float freq; float excess; float absLevel; };
     std::vector<Candidate> candidates;
 
-    // 1/6-octave steps: factor = 2^(1/6) ≈ 1.1225
     for (float fc = 60.0f; fc < 16000.0f; fc *= 1.1225f)
     {
-        float narrow = avgDb(fc / 1.122f, fc * 1.122f);   // ±1/6 oct
-        float wide   = avgDb(fc / 2.83f,  fc * 2.83f);    // ±1.5 oct
+        float narrow = avgDb(fc / 1.122f, fc * 1.122f);
+        float wide   = avgDb(fc / 2.83f,  fc * 2.83f);
         if (narrow < noiseFloor) continue;
-        float excess = narrow - wide;
-        candidates.push_back({ fc, excess, narrow });
+        candidates.push_back({ fc, narrow - wide, narrow });
     }
 
-    // Sort: primary = excess, secondary = absolute level
     std::sort(candidates.begin(), candidates.end(),
               [](const Candidate& a, const Candidate& b)
               { return (a.excess != b.excess) ? a.excess > b.excess : a.absLevel > b.absLevel; });
 
-    // Greedily pick up to kNotchSlots with quarter-octave minimum spacing
     std::vector<Candidate> chosen;
     for (auto& c : candidates)
     {
@@ -874,64 +890,59 @@ void EQComponent::runExtraClean()
         if ((int)chosen.size() == kNotchSlots) break;
     }
 
-    // Pad remaining slots with gentle fills in un-covered spectral regions
     if ((int)chosen.size() < kNotchSlots)
     {
-        // 14 equal log-spaced regions across 60 Hz – 16 kHz
         const float logLo = std::log2(60.0f);
         const float logHi = std::log2(16000.0f);
         const float step  = (logHi - logLo) / (float)kNotchSlots;
 
-        for (int region = 0; region < kNotchSlots && (int)chosen.size() < kNotchSlots; ++region)
+        for (int r = 0; r < kNotchSlots && (int)chosen.size() < kNotchSlots; ++r)
         {
-            float rLo = std::pow(2.0f, logLo + (float)region       * step);
-            float rHi = std::pow(2.0f, logLo + (float)(region + 1) * step);
-
-            // Check if this region already has a chosen cut
+            float rLo = std::pow(2.0f, logLo + (float)r       * step);
+            float rHi = std::pow(2.0f, logLo + (float)(r + 1) * step);
             bool covered = false;
             for (auto& sel : chosen)
                 if (sel.freq >= rLo && sel.freq < rHi) { covered = true; break; }
             if (covered) continue;
 
             float pf = peakFreqIn(rLo, rHi);
-            // Deduplicate against existing chosen (quarter-octave spacing)
             bool tooClose = false;
             for (auto& sel : chosen)
                 if (std::abs(std::log2(pf / sel.freq)) < 0.25f) { tooClose = true; break; }
             if (tooClose) continue;
-
-            // Padding fill: small excess, negative absLevel signals it's a fill
             chosen.push_back({ pf, 0.0f, -999.0f });
         }
     }
 
-    // Map chosen[] indices → band slot indices (skip 0 and 4 used by runAutoEQ)
-    // Slots: 1,2,3,5,6,7,8,9,10,11,12,13,14,15  (14 total)
-    auto slotForIndex = [](int i) -> int
-    {
-        if (i < 3) return i + 1;          // 0→1, 1→2, 2→3
-        return i + 2;                      // 3→5, 4→6, …, 13→15
-    };
+    auto slotForIndex = [](int i) -> int { return i < 3 ? i + 1 : i + 2; };
 
+    // Snapshot notch results for the analysis panel (updated before callAsync fires)
     for (auto& n : lastNotches_) n = {};
-
     for (int i = 0; i < (int)chosen.size(); ++i)
     {
-        int   band   = slotForIndex(i);
         bool  isFill = (chosen[i].absLevel < -900.0f);
-        float gainDb = isFill ? -1.5f
-                              : juce::jlimit(-9.0f, -2.0f, -chosen[i].excess * 0.6f);
+        float gainDb = isFill ? -1.5f : juce::jlimit(-9.0f, -2.0f, -chosen[i].excess * 0.6f);
         float q      = isFill ? 4.0f : 3.5f;
+        int   band   = slotForIndex(i);
 
         juce::String b = "band" + juce::String(band) + "_";
-        setParam(b + "freq",    chosen[i].freq);
-        setParam(b + "gain",    gainDb);
-        setParam(b + "q",       q);
-        setParam(b + "enabled", 1.0f);
+        queue(b + "freq",    chosen[i].freq);
+        queue(b + "gain",    gainDb);
+        queue(b + "q",       q);
+        queue(b + "enabled", 1.0f);
 
         lastNotches_[i] = { chosen[i].freq, gainDb, q, true };
     }
 
-    repaint();
+    juce::Component::SafePointer<EQComponent> safe(this);
+    juce::MessageManager::callAsync([safe, changes]()
+    {
+        if (!safe) return;
+        auto& apvts2 = safe->proc_.getAPVTS();
+        for (auto& [id, norm] : *changes)
+            if (auto* p = apvts2.getParameter(id))
+                p->setValueNotifyingHost(norm);
+        safe->repaint();
+    });
 }
 
