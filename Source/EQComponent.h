@@ -65,8 +65,8 @@ private:
     void runExtraClean();   // HP/LP + surgical notch cuts
 
     // Surgical notch results shown in the analysis panel after runExtraClean()
-    struct NotchResult { float freq = 0.0f; float gainDb = 0.0f; bool active = false; };
-    std::array<NotchResult, 3> lastNotches_;
+    struct NotchResult { float freq = 0.0f; float gainDb = 0.0f; float q = 3.0f; bool active = false; };
+    std::array<NotchResult, 14> lastNotches_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQComponent)
 };

@@ -623,8 +623,8 @@ void EQComponent::drawAnalysisPanel (juce::Graphics& g, float w, float h) const
             juce::String freqStr = n.freq < 1000.0f
                 ? juce::String((int)n.freq) + " Hz"
                 : juce::String(n.freq / 1000.0f, 1) + " kHz";
-            juce::String txt = freqStr + "   "
-                + juce::String(n.gainDb, 1) + " dB  (Q 2.5)";
+            juce::String txt = freqStr + "  "
+                + juce::String(n.gainDb, 1) + " dB  Q" + juce::String(n.q, 1);
             g.setColour(juce::Colour(0xff29b6f6).withAlpha(0.55f));
             g.fillEllipse(px + kPad, ty + 4.5f, 5.0f, 5.0f);
             g.setColour(juce::Colour(0xff29b6f6).withAlpha(0.85f));
@@ -781,16 +781,27 @@ void EQComponent::runAutoEQ()
 //==============================================================================
 void EQComponent::runExtraClean()
 {
-    // Step 1: run the standard HP/LP clean first
+    // Step 1: HP/LP shelves (bands 0 and 4)
     runAutoEQ();
 
-    // Step 2: surgical notches in the "thin spaces between main content"
+    // Step 2: fill all 14 remaining slots (bands 1,2,3 and 5-15) with tight
+    // surgical notches spread across the spectrum.  Goal: use every slot so
+    // each cut is as small and transparent as possible while collectively
+    // removing accumulated muddiness and resonances.
     //
-    // We compare each 1/3-octave band against the 2-octave neighbourhood.
-    // A bump that is > 3.5 dB above its surroundings but NOT in the main
-    // body of the signal (excluded if within 6 dB of the loudest level)
-    // is an unnecessary resonance.  A tight notch (Q 2.5, ≤ –8 dB) clips
-    // only the tip — perceptually transparent, spectrally cleaner.
+    // Algorithm:
+    //  a) Scan 60 Hz – 16 kHz in 1/6-octave steps.  For each centre freq,
+    //     compare a narrow window (±0.15 oct) against a wide reference
+    //     (±1.5 oct) to detect bumps.  Also record absolute level so we can
+    //     rank by energy even when excess is low.
+    //  b) Sort candidates by excess (highest first); accept candidates with
+    //     quarter-octave spacing between chosen cuts.
+    //  c) If fewer than 14 candidates are found, pad remaining slots by
+    //     dividing the 60 Hz – 16 kHz range into evenly-spaced regions and
+    //     placing a very gentle cut (-1.5 dB, Q 4.0) at the highest-energy
+    //     frequency in each un-covered region.
+    //  d) All resonance cuts use Q 3.5, gain -2 to -9 dB.
+    //     Padding fills use Q 4.0, gain -1.5 dB.
 
     auto& sa  = proc_.getHintsAnalyser();
     double sr = sa.getSampleRate();
@@ -798,6 +809,7 @@ void EQComponent::runExtraClean()
 
     const auto& sp  = sa.getSpectrum();
     float binHz = (float)sr / (float)SpectrumAnalyser::fftSize;
+    if (binHz <= 0.0f) return;
 
     auto avgDb = [&](float lo, float hi) -> float
     {
@@ -810,8 +822,20 @@ void EQComponent::runExtraClean()
         return cnt > 0 ? juce::Decibels::gainToDecibels((float)(sum / cnt), -100.0f) : -100.0f;
     };
 
+    // Peak frequency in range (linear sweep, returns centre of loudest bin)
+    auto peakFreqIn = [&](float lo, float hi) -> float
+    {
+        int binLo = juce::jmax(1, (int)(lo / binHz));
+        int binHi = juce::jmin(SpectrumAnalyser::numBins - 1, (int)(hi / binHz));
+        int bestBin = binLo;
+        float bestVal = sp[binLo];
+        for (int i = binLo + 1; i <= binHi; ++i)
+            if (sp[i] > bestVal) { bestVal = sp[i]; bestBin = i; }
+        return (float)bestBin * binHz;
+    };
+
     float ref        = avgDb(500.0f, 5000.0f);
-    float noiseFloor = ref - 18.0f;
+    float noiseFloor = ref - 20.0f;
 
     auto& apvts = proc_.getAPVTS();
     auto setParam = [&](const juce::String& id, float val) {
@@ -819,45 +843,93 @@ void EQComponent::runExtraClean()
             p->setValueNotifyingHost(p->convertTo0to1(val));
     };
 
-    struct Candidate { float freq; float excess; };
+    static constexpr int kNotchSlots = 14;  // bands 1,2,3 and 5-15
+
+    struct Candidate { float freq; float excess; float absLevel; };
     std::vector<Candidate> candidates;
 
-    for (float fc = 80.0f; fc < 12000.0f; fc *= 1.122f)
+    // 1/6-octave steps: factor = 2^(1/6) ≈ 1.1225
+    for (float fc = 60.0f; fc < 16000.0f; fc *= 1.1225f)
     {
-        float narrow = avgDb(fc / 1.15f, fc * 1.15f);
-        float wide   = avgDb(fc / 2.83f, fc * 2.83f);
-        if (narrow < noiseFloor + 4.0f) continue;
-        if (narrow > ref - 6.0f) continue;
+        float narrow = avgDb(fc / 1.122f, fc * 1.122f);   // ±1/6 oct
+        float wide   = avgDb(fc / 2.83f,  fc * 2.83f);    // ±1.5 oct
+        if (narrow < noiseFloor) continue;
         float excess = narrow - wide;
-        if (excess > 3.5f)
-            candidates.push_back({ fc, excess });
+        candidates.push_back({ fc, excess, narrow });
     }
 
+    // Sort: primary = excess, secondary = absolute level
     std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b){ return a.excess > b.excess; });
+              [](const Candidate& a, const Candidate& b)
+              { return (a.excess != b.excess) ? a.excess > b.excess : a.absLevel > b.absLevel; });
 
+    // Greedily pick up to kNotchSlots with quarter-octave minimum spacing
     std::vector<Candidate> chosen;
     for (auto& c : candidates)
     {
         bool tooClose = false;
         for (auto& sel : chosen)
-            if (std::abs(std::log2(c.freq / sel.freq)) < 0.5f) { tooClose = true; break; }
+            if (std::abs(std::log2(c.freq / sel.freq)) < 0.25f) { tooClose = true; break; }
         if (!tooClose) chosen.push_back(c);
-        if ((int)chosen.size() == 3) break;
+        if ((int)chosen.size() == kNotchSlots) break;
     }
+
+    // Pad remaining slots with gentle fills in un-covered spectral regions
+    if ((int)chosen.size() < kNotchSlots)
+    {
+        // 14 equal log-spaced regions across 60 Hz – 16 kHz
+        const float logLo = std::log2(60.0f);
+        const float logHi = std::log2(16000.0f);
+        const float step  = (logHi - logLo) / (float)kNotchSlots;
+
+        for (int region = 0; region < kNotchSlots && (int)chosen.size() < kNotchSlots; ++region)
+        {
+            float rLo = std::pow(2.0f, logLo + (float)region       * step);
+            float rHi = std::pow(2.0f, logLo + (float)(region + 1) * step);
+
+            // Check if this region already has a chosen cut
+            bool covered = false;
+            for (auto& sel : chosen)
+                if (sel.freq >= rLo && sel.freq < rHi) { covered = true; break; }
+            if (covered) continue;
+
+            float pf = peakFreqIn(rLo, rHi);
+            // Deduplicate against existing chosen (quarter-octave spacing)
+            bool tooClose = false;
+            for (auto& sel : chosen)
+                if (std::abs(std::log2(pf / sel.freq)) < 0.25f) { tooClose = true; break; }
+            if (tooClose) continue;
+
+            // Padding fill: small excess, negative absLevel signals it's a fill
+            chosen.push_back({ pf, 0.0f, -999.0f });
+        }
+    }
+
+    // Map chosen[] indices → band slot indices (skip 0 and 4 used by runAutoEQ)
+    // Slots: 1,2,3,5,6,7,8,9,10,11,12,13,14,15  (14 total)
+    auto slotForIndex = [](int i) -> int
+    {
+        if (i < 3) return i + 1;          // 0→1, 1→2, 2→3
+        return i + 2;                      // 3→5, 4→6, …, 13→15
+    };
 
     for (auto& n : lastNotches_) n = {};
 
     for (int i = 0; i < (int)chosen.size(); ++i)
     {
-        int   band   = i + 1;
-        float gainDb = juce::jlimit(-8.0f, -2.0f, -chosen[i].excess * 0.65f);
+        int   band   = slotForIndex(i);
+        bool  isFill = (chosen[i].absLevel < -900.0f);
+        float gainDb = isFill ? -1.5f
+                              : juce::jlimit(-9.0f, -2.0f, -chosen[i].excess * 0.6f);
+        float q      = isFill ? 4.0f : 3.5f;
+
         juce::String b = "band" + juce::String(band) + "_";
         setParam(b + "freq",    chosen[i].freq);
         setParam(b + "gain",    gainDb);
-        setParam(b + "q",       2.5f);
+        setParam(b + "q",       q);
         setParam(b + "enabled", 1.0f);
-        lastNotches_[i] = { chosen[i].freq, gainDb, true };
+
+        lastNotches_[i] = { chosen[i].freq, gainDb, q, true };
     }
 
     repaint();
