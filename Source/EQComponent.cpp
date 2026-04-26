@@ -2,14 +2,11 @@
 #include "PluginProcessor.h"
 
 static const juce::Colour kBandColours[kNumEQBands] = {
-    // Original 5 bands
-    juce::Colour(0xff4CAF50), juce::Colour(0xff2196F3),
-    juce::Colour(0xffFF9800), juce::Colour(0xff9C27B0), juce::Colour(0xffF44336),
-    // User-added bands 5-15
-    juce::Colour(0xff00BCD4), juce::Colour(0xffFFEB3B), juce::Colour(0xffE91E63),
-    juce::Colour(0xff8BC34A), juce::Colour(0xffFF5722), juce::Colour(0xff009688),
-    juce::Colour(0xff673AB7), juce::Colour(0xffFFC107), juce::Colour(0xff03A9F4),
-    juce::Colour(0xffCDDC39), juce::Colour(0xffF06292),
+    juce::Colour(0xff4CAF50),
+    juce::Colour(0xff2196F3),
+    juce::Colour(0xffFF9800),
+    juce::Colour(0xff9C27B0),
+    juce::Colour(0xffF44336),
 };
 
 EQComponent::EQComponent (MixSuiteProcessor& proc) : proc_(proc)
@@ -332,46 +329,6 @@ void EQComponent::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isRightButtonDown())
     {
-        float w = (float)getWidth(), h = (float)(getHeight() - 20);
-        int band = bandAtPoint(e.position, w, h);
-
-        if (band >= 0)
-        {
-            // Right-click on a node → band options
-            auto& apvts = proc_.getAPVTS();
-            juce::String p = "band" + juce::String(band) + "_";
-            bool isEnabled = *apvts.getRawParameterValue(p + "enabled") > 0.5f;
-            bool isUserBand = (band >= kDefaultEQBands);
-
-            juce::PopupMenu menu;
-            menu.addSectionHeader("Band " + juce::String(band + 1));
-            menu.addItem(1, isEnabled ? "Bypass Band" : "Enable Band");
-            if (isUserBand)
-                menu.addItem(2, "Remove Band");
-
-            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
-                [this, band, isEnabled, isUserBand](int result)
-                {
-                    auto& apvts = proc_.getAPVTS();
-                    juce::String p = "band" + juce::String(band) + "_";
-                    if (result == 1)
-                    {
-                        if (auto* ep = apvts.getParameter(p + "enabled"))
-                            ep->setValueNotifyingHost(isEnabled ? 0.0f : 1.0f);
-                    }
-                    else if (result == 2 && isUserBand)
-                    {
-                        if (auto* ep = apvts.getParameter(p + "enabled"))
-                            ep->setValueNotifyingHost(0.0f);
-                        if (auto* gp = apvts.getParameter(p + "gain"))
-                            gp->setValueNotifyingHost(gp->convertTo0to1(0.0f));
-                    }
-                    repaint();
-                });
-            return;
-        }
-
-        // Right-click on empty space → track colour picker
         int slot = proc_.getSlotIndex();
         if (slot < 0) return;
         auto picker = std::make_unique<TrackColourPicker>(slot, [this] { repaint(); });
@@ -380,39 +337,6 @@ void EQComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
     draggedBand_ = bandAtPoint(e.position, (float)getWidth(), (float)(getHeight() - 20));
-    repaint();
-}
-
-void EQComponent::mouseDoubleClick (const juce::MouseEvent& e)
-{
-    float w = (float)getWidth(), h = (float)(getHeight() - 20);
-
-    // Ignore double-clicks on existing nodes
-    if (bandAtPoint(e.position, w, h) >= 0) return;
-
-    // Find first free slot in the user-band range (5-15)
-    auto& apvts = proc_.getAPVTS();
-    int freeSlot = -1;
-    for (int i = kDefaultEQBands; i < kNumEQBands; ++i)
-    {
-        juce::String p = "band" + juce::String(i) + "_";
-        if (*apvts.getRawParameterValue(p + "enabled") < 0.5f) { freeSlot = i; break; }
-    }
-    if (freeSlot < 0) return;  // all 16 slots used
-
-    float freq = juce::jlimit(kMinFreq, kMaxFreq, xToFreq(e.position.x, w));
-    float gain = juce::jlimit(-kEqRange, kEqRange, yToEqDb(e.position.y, h));
-    juce::String p = "band" + juce::String(freeSlot) + "_";
-
-    if (auto* fp = apvts.getParameter(p + "freq"))
-        fp->setValueNotifyingHost(fp->convertTo0to1(freq));
-    if (auto* gp = apvts.getParameter(p + "gain"))
-        gp->setValueNotifyingHost(gp->convertTo0to1(gain));
-    if (auto* qp = apvts.getParameter(p + "q"))
-        qp->setValueNotifyingHost(qp->convertTo0to1(1.0f));
-    if (auto* ep = apvts.getParameter(p + "enabled"))
-        ep->setValueNotifyingHost(1.0f);
-
     repaint();
 }
 
@@ -496,11 +420,10 @@ void EQComponent::paint (juce::Graphics& g)
         int n = 0;
         for (auto* p2 : SharedAnalyserState::getInstance()->getProcessors())
             if (p2) ++n;
-        txt = "MixSuite  |  Track " + juce::String(proc_.getSlotIndex() + 1)
+        txt = "VisualEQ  |  Track " + juce::String(proc_.getSlotIndex() + 1)
             + " of " + juce::String(n)
-            + "   |  drag: freq+gain   |   scroll: Q"
-            + "   |  double-click: add band   |   right-click band: options"
-            + (n >= 2 ? "   |  orange/red = clash" : "");
+            + "   |  drag nodes: freq + gain   |   scroll: Q"
+            + (n >= 2 ? "   |  orange/red = frequency clash" : "");
     }
     g.drawText(txt, 6, (int)h + 1, (int)w - 12, 18, juce::Justification::centredLeft);
 }

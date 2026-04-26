@@ -28,7 +28,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MixSuiteProcessor::createPar
         layout.add(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID(p + "enabled", 1),
             "Band " + juce::String(i + 1) + " On",
-            i < kDefaultEQBands));
+            true));
     }
     return layout;
 }
