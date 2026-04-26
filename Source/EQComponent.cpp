@@ -708,32 +708,40 @@ void EQComponent::runAutoEQ()
         if (avgDb(f / 1.2f, f) > threshold) { lpFreq = f; break; }
     }
 
-    auto& apvts = proc_.getAPVTS();
-    auto setParam = [&](const juce::String& id, float val) {
+    // Collect changes and apply them via callAsync — avoids re-entering any
+    // host-held lock that may be active during the button-click notification.
+    using Chg = std::pair<juce::String, float>;
+    auto changes = std::make_shared<std::vector<Chg>>();
+    auto& apvts  = proc_.getAPVTS();
+
+    auto queue = [&](const juce::String& id, float val) {
         if (auto* p = apvts.getParameter(id))
-            p->setValueNotifyingHost(p->convertTo0to1(val));
+            changes->push_back({ id, p->convertTo0to1(val) });
     };
 
-    // Band 0 (low shelf): cut rumble below where signal starts
-    // Only engage if signal doesn't start right at the bottom (>40 Hz)
     if (hpFreq > 40.0f)
     {
-        float shelfFreq = juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f);
-        setParam("band0_freq",    shelfFreq);
-        setParam("band0_gain",    -15.0f);
-        setParam("band0_enabled", 1.0f);
+        queue("band0_freq",    juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f));
+        queue("band0_gain",    -15.0f);
+        queue("band0_enabled", 1.0f);
     }
 
-    // Band 4 (high shelf): cut hiss above where signal ends
-    // Only engage if signal doesn't extend to the very top (<17 kHz)
     if (lpFreq > 0.0f && lpFreq < 17000.0f)
     {
-        float shelfFreq = juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f);
-        setParam("band4_freq",    shelfFreq);
-        setParam("band4_gain",    -15.0f);
-        setParam("band4_enabled", 1.0f);
+        queue("band4_freq",    juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f));
+        queue("band4_gain",    -15.0f);
+        queue("band4_enabled", 1.0f);
     }
 
-    repaint();
+    juce::Component::SafePointer<EQComponent> safe(this);
+    juce::MessageManager::callAsync([safe, changes]()
+    {
+        if (!safe) return;
+        auto& apvts2 = safe->proc_.getAPVTS();
+        for (auto& [id, norm] : *changes)
+            if (auto* p = apvts2.getParameter(id))
+                p->setValueNotifyingHost(norm);
+        safe->repaint();
+    });
 }
 
