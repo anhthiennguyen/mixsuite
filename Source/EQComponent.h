@@ -62,5 +62,9 @@ private:
     juce::TextButton autoEqBtn_;
     void runAutoEQ();
 
+    // Extra-clean: surgical notch results shown in the analysis panel
+    struct NotchResult { float freq = 0.0f; float gainDb = 0.0f; bool active = false; };
+    std::array<NotchResult, 3> lastNotches_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQComponent)
 };

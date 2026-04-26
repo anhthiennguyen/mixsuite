@@ -539,7 +539,12 @@ void EQComponent::drawAnalysisPanel (juce::Graphics& g, float w, float h) const
     constexpr float kLineH  = 17.0f;
     constexpr float kTitleH = 16.0f;
     float panelW = 230.0f;
-    float panelH = kTitleH + kPad * 1.5f + (float)lines.size() * kLineH + kPad * 0.5f;
+    int activeNotches = 0;
+    for (auto& n : lastNotches_) if (n.active) ++activeNotches;
+    float notchSection = activeNotches > 0
+        ? (8.0f + 14.0f + (float)activeNotches * kLineH)  // separator + header + rows
+        : 0.0f;
+    float panelH = kTitleH + kPad * 1.5f + (float)lines.size() * kLineH + kPad * 0.5f + notchSection;
 
     float px = w - panelW - 10.0f;
     float py = 10.0f;
@@ -572,16 +577,49 @@ void EQComponent::drawAnalysisPanel (juce::Graphics& g, float w, float h) const
         juce::Colour col = noSignal  ? juce::Colours::white.withAlpha(0.45f)
                          : isGood   ? juce::Colour(0xff66dd77)
                                     : juce::Colour(0xffffc44f);
-        // Bullet
         g.setColour(col.withAlpha(col.getAlpha() * 0.7f));
         g.fillEllipse(px + kPad, ty + 4.5f, 5.0f, 5.0f);
-
         g.setColour(col);
         g.drawText(line, (int)(px + kPad + 10.0f), (int)ty,
                    (int)(panelW - kPad * 2.0f - 10.0f), (int)kLineH,
                    juce::Justification::centredLeft);
-
         ty += kLineH;
+    }
+
+    // Show surgical notches applied by extra-clean (if any)
+    bool anyNotch = false;
+    for (auto& n : lastNotches_) if (n.active) { anyNotch = true; break; }
+
+    if (anyNotch)
+    {
+        // Thin separator
+        g.setColour(juce::Colours::white.withAlpha(0.08f));
+        g.drawLine(px + kPad, ty + 2.0f, px + panelW - kPad, ty + 2.0f, 0.5f);
+        ty += 6.0f;
+
+        g.setFont(juce::Font(juce::FontOptions().withHeight(9.5f).withStyle("Bold")));
+        g.setColour(juce::Colour(0xff29b6f6).withAlpha(0.70f));
+        g.drawText("NOTCHES APPLIED", (int)(px + kPad), (int)ty,
+                   (int)(panelW - kPad * 2.0f), 13, juce::Justification::centredLeft);
+        ty += 14.0f;
+
+        g.setFont(juce::Font(juce::FontOptions().withHeight(10.5f)));
+        for (auto& n : lastNotches_)
+        {
+            if (!n.active) continue;
+            juce::String freqStr = n.freq < 1000.0f
+                ? juce::String((int)n.freq) + " Hz"
+                : juce::String(n.freq / 1000.0f, 1) + " kHz";
+            juce::String txt = freqStr + "   "
+                + juce::String(n.gainDb, 1) + " dB  (Q 2.5)";
+            g.setColour(juce::Colour(0xff29b6f6).withAlpha(0.55f));
+            g.fillEllipse(px + kPad, ty + 4.5f, 5.0f, 5.0f);
+            g.setColour(juce::Colour(0xff29b6f6).withAlpha(0.85f));
+            g.drawText(txt, (int)(px + kPad + 10.0f), (int)ty,
+                       (int)(panelW - kPad * 2.0f - 10.0f), (int)kLineH,
+                       juce::Justification::centredLeft);
+            ty += kLineH;
+        }
     }
 }
 
@@ -670,7 +708,6 @@ juce::String EQComponent::computeAnalysisHints() const
 //==============================================================================
 void EQComponent::runAutoEQ()
 {
-    // Cut frequencies outside the signal's useful range (rumble below, hiss above)
     auto& sa  = proc_.getHintsAnalyser();
     double sr = sa.getSampleRate();
     if (sr < 1.0) return;
@@ -678,6 +715,7 @@ void EQComponent::runAutoEQ()
     const auto& sp  = sa.getSpectrum();
     float binHz = (float)sr / (float)SpectrumAnalyser::fftSize;
 
+    // Average linear power over a range, returned in dB
     auto avgDb = [&](float lo, float hi) -> float
     {
         int binLo = juce::jmax(1, (int)(lo / binHz));
@@ -692,21 +730,7 @@ void EQComponent::runAutoEQ()
     float ref = avgDb(500.0f, 5000.0f);
     if (ref < -50.0f) return;
 
-    float threshold = ref - 18.0f;  // 18 dB below mid-range = no useful signal
-
-    // Scan upward to find the first frequency band with real signal
-    float hpFreq = -1.0f;
-    for (float f = 20.0f; f < 500.0f; f *= 1.2f)
-    {
-        if (avgDb(f, f * 1.2f) > threshold) { hpFreq = f; break; }
-    }
-
-    // Scan downward to find the highest frequency band with real signal
-    float lpFreq = -1.0f;
-    for (float f = 20000.0f; f > 2000.0f; f /= 1.2f)
-    {
-        if (avgDb(f / 1.2f, f) > threshold) { lpFreq = f; break; }
-    }
+    float noiseFloor = ref - 18.0f;
 
     auto& apvts = proc_.getAPVTS();
     auto setParam = [&](const juce::String& id, float val) {
@@ -714,24 +738,90 @@ void EQComponent::runAutoEQ()
             p->setValueNotifyingHost(p->convertTo0to1(val));
     };
 
-    // Band 0 (low shelf): cut rumble below where signal starts
-    // Only engage if signal doesn't start right at the bottom (>40 Hz)
+    // ── Band 0: low-shelf HP ────────────────────────────────────────────────
+    float hpFreq = -1.0f;
+    for (float f = 20.0f; f < 500.0f; f *= 1.2f)
+        if (avgDb(f, f * 1.2f) > noiseFloor) { hpFreq = f; break; }
+
     if (hpFreq > 40.0f)
     {
-        float shelfFreq = juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f);
-        setParam("band0_freq",    shelfFreq);
+        setParam("band0_freq",    juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f));
         setParam("band0_gain",    -15.0f);
         setParam("band0_enabled", 1.0f);
     }
 
-    // Band 4 (high shelf): cut hiss above where signal ends
-    // Only engage if signal doesn't extend to the very top (<17 kHz)
+    // ── Band 4: high-shelf LP ────────────────────────────────────────────────
+    float lpFreq = -1.0f;
+    for (float f = 20000.0f; f > 2000.0f; f /= 1.2f)
+        if (avgDb(f / 1.2f, f) > noiseFloor) { lpFreq = f; break; }
+
     if (lpFreq > 0.0f && lpFreq < 17000.0f)
     {
-        float shelfFreq = juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f);
-        setParam("band4_freq",    shelfFreq);
+        setParam("band4_freq",    juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f));
         setParam("band4_gain",    -15.0f);
         setParam("band4_enabled", 1.0f);
+    }
+
+    // ── Bands 1-3: surgical notches at narrow resonant bumps ─────────────────
+    //
+    // A "thin unnecessary space" is a narrow frequency region that sticks up
+    // above its local neighbourhood — energy that sits between the main content
+    // peaks and contributes nothing to the perceived sound.  We find these by
+    // comparing each 1/3-octave band against the 2-octave average centred on
+    // the same frequency.  If the narrow band is notably louder than its
+    // surroundings, it is a candidate for a tight notch cut.
+    //
+    // Cuts are kept mild (≤ –8 dB) and narrow (Q ≈ 2.5) so they are
+    // perceptually transparent — they only clip the tip of the bump.
+
+    struct Candidate { float freq; float excess; };
+    std::vector<Candidate> candidates;
+
+    // Sweep from 80 Hz to 12 kHz in ~1/6-octave steps
+    for (float fc = 80.0f; fc < 12000.0f; fc *= 1.122f)   // 1.122 ≈ 2^(1/6)
+    {
+        float narrow = avgDb(fc / 1.15f, fc * 1.15f);      // ±1/3 oct around fc
+        float wide   = avgDb(fc / 2.83f, fc * 2.83f);      // ±1.5 oct around fc
+
+        // Only consider frequencies with some real signal
+        if (narrow < noiseFloor + 4.0f) continue;
+
+        // Don't touch anything close to the loudest content (main body of sound)
+        if (narrow > ref - 6.0f) continue;
+
+        float excess = narrow - wide;
+        if (excess > 3.5f)
+            candidates.push_back({ fc, excess });
+    }
+
+    // Keep only the three most prominent bumps, spread across the spectrum
+    // (suppress candidates within a half-octave of a stronger one)
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate& a, const Candidate& b){ return a.excess > b.excess; });
+
+    std::vector<Candidate> chosen;
+    for (auto& c : candidates)
+    {
+        bool tooClose = false;
+        for (auto& sel : chosen)
+            if (std::abs(std::log2(c.freq / sel.freq)) < 0.5f) { tooClose = true; break; }
+        if (!tooClose) chosen.push_back(c);
+        if ((int)chosen.size() == 3) break;
+    }
+
+    // Reset notch results from last run
+    for (auto& n : lastNotches_) n = {};
+
+    for (int i = 0; i < (int)chosen.size(); ++i)
+    {
+        int   band     = i + 1;   // bands 1, 2, 3
+        float gainDb   = juce::jlimit(-8.0f, -2.0f, -chosen[i].excess * 0.65f);
+        juce::String b = "band" + juce::String(band) + "_";
+        setParam(b + "freq",    chosen[i].freq);
+        setParam(b + "gain",    gainDb);
+        setParam(b + "q",       2.5f);
+        setParam(b + "enabled", 1.0f);
+        lastNotches_[i] = { chosen[i].freq, gainDb, true };
     }
 
     repaint();
