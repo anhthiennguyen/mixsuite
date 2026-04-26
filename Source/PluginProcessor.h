@@ -4,14 +4,29 @@
 #include "TrackState.h"
 #include "DSPEngine.h"
 
-static constexpr int kNumEQBands = 5;
+static constexpr int kNumEQBands    = 16;  // max slots
+static constexpr int kDefaultEQBands = 5;  // on by default
 
 enum class BandType { LowShelf, Peak, HighShelf };
 static constexpr BandType kEQBandTypes[kNumEQBands] = {
-    BandType::LowShelf, BandType::Peak, BandType::Peak, BandType::Peak, BandType::HighShelf
+    BandType::LowShelf,
+    BandType::Peak, BandType::Peak, BandType::Peak,
+    BandType::HighShelf,
+    // Slots 5-15: user-added peaks
+    BandType::Peak, BandType::Peak, BandType::Peak, BandType::Peak,
+    BandType::Peak, BandType::Peak, BandType::Peak, BandType::Peak,
+    BandType::Peak, BandType::Peak, BandType::Peak,
 };
-static constexpr float kEQDefaultFreqs[kNumEQBands] = { 80.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f };
-static constexpr float kEQDefaultQs[kNumEQBands]    = { 0.7f,  1.0f,   1.0f,    1.0f,    0.7f };
+static constexpr float kEQDefaultFreqs[kNumEQBands] = {
+    80.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f,
+    160.0f, 400.0f, 630.0f, 2500.0f, 5000.0f, 8000.0f,
+    315.0f, 1600.0f, 6300.0f, 10000.0f, 800.0f,
+};
+static constexpr float kEQDefaultQs[kNumEQBands] = {
+    0.7f, 1.0f, 1.0f, 1.0f, 0.7f,
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+};
 
 class MixSuiteProcessor : public juce::AudioProcessor
 {
