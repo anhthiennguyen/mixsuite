@@ -46,9 +46,30 @@ public:
         addAndMakeVisible (selector_);
         selector_.setCurrentColour (SharedAnalyserState::trackColour (slot));
         selector_.addChangeListener (this);
-        setSize (300, 280);
+
+        randomBtn_.setButtonText ("Pick Random Colour");
+        randomBtn_.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff1a2d3a));
+        randomBtn_.setColour (juce::TextButton::textColourOffId, juce::Colours::white.withAlpha (0.80f));
+        randomBtn_.onClick = [this]
+        {
+            juce::Random rng;
+            auto col = juce::Colour::fromHSV (rng.nextFloat(),
+                                              0.55f + rng.nextFloat() * 0.35f,
+                                              0.75f + rng.nextFloat() * 0.20f,
+                                              1.0f);
+            selector_.setCurrentColour (col);
+        };
+        addAndMakeVisible (randomBtn_);
+
+        setSize (300, 310);
     }
-    void resized() override { selector_.setBounds (getLocalBounds()); }
+
+    void resized() override
+    {
+        constexpr int kBtnH = 28;
+        selector_ .setBounds (0, 0, getWidth(), getHeight() - kBtnH - 4);
+        randomBtn_.setBounds (4, getHeight() - kBtnH - 2, getWidth() - 8, kBtnH);
+    }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override
@@ -62,4 +83,5 @@ private:
     juce::ColourSelector selector_ { juce::ColourSelector::showColourAtTop
                                    | juce::ColourSelector::editableColour
                                    | juce::ColourSelector::showColourspace };
+    juce::TextButton randomBtn_;
 };
