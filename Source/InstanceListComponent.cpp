@@ -65,7 +65,7 @@ int InstanceListComponent::getPreferredHeight() const
 {
     int n = 0;
     auto procs = SharedAnalyserState::getInstance()->getProcessors();
-    for (auto* p : procs) if (p) ++n;
+    for (auto* p : procs) if (p && p->getTrackState().mode != TrackState::Mode::Master) ++n;
     return kHeaderH + juce::jmax(1, n) * kRowH + kStripH + 4;
 }
 
@@ -186,6 +186,7 @@ static int slotForRow (int row)
     for (int slot = 0; slot < SharedAnalyserState::kMaxTracks; ++slot)
     {
         if (!procs[slot]) continue;
+        if (procs[slot]->getTrackState().mode == TrackState::Mode::Master) continue;
         if (current == row) return slot;
         ++current;
     }
@@ -202,7 +203,7 @@ static int activeRowCount()
 {
     int n = 0;
     auto procs = SharedAnalyserState::getInstance()->getProcessors();
-    for (auto* p : procs) if (p) ++n;
+    for (auto* p : procs) if (p && p->getTrackState().mode != TrackState::Mode::Master) ++n;
     return n;
 }
 
@@ -290,6 +291,7 @@ void InstanceListComponent::paint (juce::Graphics& g)
     for (int slot = 0; slot < SharedAnalyserState::kMaxTracks; ++slot)
     {
         if (!procs[slot]) continue;
+        if (procs[slot]->getTrackState().mode == TrackState::Mode::Master) continue;
         drawRow(g, slot, row,
                 { 0.0f, (float)(kHeaderH + row * kRowH), (float)getWidth(), (float)kRowH });
         ++row;
