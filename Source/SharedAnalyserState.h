@@ -24,6 +24,11 @@ public:
     static juce::Colour trackColour    (int slot);
     void                setTrackColour (int slot, juce::Colour colour);
 
+    // Editor registry — call from message thread only
+    void             registerEditor   (int slot, juce::Component* ed);
+    void             unregisterEditor (int slot);
+    juce::Component* getEditor        (int slot) const;
+
 private:
     SharedAnalyserState();
 
@@ -31,7 +36,8 @@ private:
     std::array<Slot, kMaxTracks> slots_;
     mutable juce::CriticalSection lock_;
 
-    juce::Colour colours_[kMaxTracks];
+    juce::Colour     colours_[kMaxTracks];
+    juce::Component* editors_[kMaxTracks] = {};
 };
 
 //==============================================================================

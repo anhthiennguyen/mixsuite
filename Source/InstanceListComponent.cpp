@@ -215,18 +215,14 @@ void InstanceListComponent::mouseDown (const juce::MouseEvent& e)
     int slot = slotForRow(row);
     if (slot < 0) return;
 
-    auto procs = SharedAnalyserState::getInstance()->getProcessors();
-    auto* proc = procs[slot];
-    if (!proc) return;
+    auto* editor = SharedAnalyserState::getInstance()->getEditor(slot);
+    if (!editor) return;
 
-    if (auto* editor = proc->getActiveEditor())
+    if (auto* top = editor->getTopLevelComponent())
     {
-        if (auto* top = editor->getTopLevelComponent())
-        {
-            top->toFront(true);
-            if (auto* peer = top->getPeer())
-                peer->toFront(true);
-        }
+        top->toFront(true);
+        if (auto* peer = top->getPeer())
+            peer->toFront(true);
     }
 }
 

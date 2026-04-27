@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "SharedAnalyserState.h"
 
 static constexpr juce::uint32 kTabBarBg    = 0xff0a1220;
 static constexpr juce::uint32 kEQColour    = 0xff2979ff;   // vivid blue
@@ -16,11 +17,13 @@ MixSuiteEditor::MixSuiteEditor (MixSuiteProcessor& p)
     setResizable(true, true);
     setResizeLimits(600, 480, 1600, 1000);
     startTimerHz(30);
+    SharedAnalyserState::getInstance()->registerEditor(proc_.getSlotIndex(), this);
 }
 
 MixSuiteEditor::~MixSuiteEditor()
 {
     stopTimer();
+    SharedAnalyserState::getInstance()->unregisterEditor(proc_.getSlotIndex());
 }
 
 void MixSuiteEditor::timerCallback()

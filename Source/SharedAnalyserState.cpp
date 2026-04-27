@@ -55,3 +55,19 @@ void SharedAnalyserState::setTrackColour (int slot, juce::Colour colour)
     if (slot >= 0 && slot < kMaxTracks)
         colours_[slot] = colour;
 }
+
+void SharedAnalyserState::registerEditor (int slot, juce::Component* ed)
+{
+    if (slot >= 0 && slot < kMaxTracks) editors_[slot] = ed;
+}
+
+void SharedAnalyserState::unregisterEditor (int slot)
+{
+    if (slot >= 0 && slot < kMaxTracks) editors_[slot] = nullptr;
+}
+
+juce::Component* SharedAnalyserState::getEditor (int slot) const
+{
+    if (slot >= 0 && slot < kMaxTracks) return editors_[slot];
+    return nullptr;
+}
