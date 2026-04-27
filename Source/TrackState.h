@@ -26,7 +26,7 @@ struct TrackDSPParams
 
 struct TrackState
 {
-    enum class Mode { Stereo, Pan };
+    enum class Mode { Stereo, Pan, Master };
 
     juce::String label      = "Track";
     float normX             = 0.5f;
@@ -52,6 +52,7 @@ struct TrackState
 
     void computeDSP()
     {
+        if (mode == Mode::Master) { dsp = TrackDSPParams{}; return; }
         dsp.isPanMode     = (mode == Mode::Pan);
         dsp.panNormalized = getPan();
         float frac  = getFractionalBand();

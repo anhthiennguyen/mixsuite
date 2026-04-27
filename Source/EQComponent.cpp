@@ -187,6 +187,7 @@ void EQComponent::drawMudOverlay (juce::Graphics& g, float w, float h) const
         for (auto* p : procs)
         {
             if (!p) continue;
+            if (p->getTrackState().mode == TrackState::Mode::Master) continue;
             if (getDbAtFreq(p->getEQAnalyser(), freq) > kThreshDb)
                 ++tracksWithEnergy;
         }
@@ -216,6 +217,7 @@ void EQComponent::drawAllSpectra (juce::Graphics& g, float w, float h) const
         auto* p = procs[slot];
         if (!p) continue;
         bool isOwn = (slot == ownSlot);
+        if (!isOwn && p->getTrackState().mode == TrackState::Mode::Master) continue;
         if (!isOwn && !showOtherSpectra_) continue;
 
         auto& sa   = p->getEQAnalyser();

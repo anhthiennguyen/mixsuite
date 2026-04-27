@@ -62,6 +62,13 @@ juce::Rectangle<int> MixSuiteEditor::instanceListRect() const
     return { getWidth() - kW - 10, (kTabBarH - kH) / 2, kW, kH };
 }
 
+juce::Rectangle<int> MixSuiteEditor::masterRect() const
+{
+    constexpr int kW = 58, kH = 20;
+    auto ir = instanceListRect();
+    return { ir.getX() - kW - 6, (kTabBarH - kH) / 2, kW, kH };
+}
+
 //==============================================================================
 void MixSuiteEditor::drawTabBar (juce::Graphics& g) const
 {
@@ -133,6 +140,18 @@ void MixSuiteEditor::drawTabBar (juce::Graphics& g) const
     drawTab(eqTabRect(),   "EQ",      activeTab_ == ActiveTab::EQ,      proc_.eqEnabled_,      kEQColour);
     drawTab(spatTabRect(), "SPATIAL", activeTab_ == ActiveTab::Spatial,  proc_.spatialEnabled_, kSpatColour);
 
+    // Master button
+    bool isMaster = (proc_.getTrackState().mode == TrackState::Mode::Master);
+    auto mr = masterRect().toFloat();
+    g.setColour(isMaster ? juce::Colour(0xff3a2000) : juce::Colour(0xff0d1824));
+    g.fillRoundedRectangle(mr, 4.0f);
+    g.setColour(isMaster ? juce::Colour(0xffffaa00).withAlpha(0.70f)
+                         : juce::Colours::white.withAlpha(0.13f));
+    g.drawRoundedRectangle(mr, 4.0f, 0.8f);
+    g.setFont(juce::Font(juce::FontOptions().withHeight(9.5f).withStyle("Bold")));
+    g.setColour(isMaster ? juce::Colour(0xffffcc44) : juce::Colours::white.withAlpha(0.38f));
+    g.drawText("MASTER", mr.toNearestInt(), juce::Justification::centred);
+
     // Instance list button (top-right)
     auto ir = instanceListRect().toFloat();
     bool instOpen = InstanceListWindow::isOpen();
@@ -164,6 +183,15 @@ void MixSuiteEditor::mouseDown (const juce::MouseEvent& e)
     if (spatBypassRect().contains(e.getPosition()))
     {
         proc_.spatialEnabled_ = !proc_.spatialEnabled_;
+        repaint(0, 0, getWidth(), kTabBarH);
+        return;
+    }
+
+    // Master toggle
+    if (masterRect().contains(e.getPosition()))
+    {
+        bool isMaster = (proc_.getTrackState().mode == TrackState::Mode::Master);
+        proc_.setTrackMode(isMaster ? TrackState::Mode::Stereo : TrackState::Mode::Master);
         repaint(0, 0, getWidth(), kTabBarH);
         return;
     }

@@ -38,6 +38,7 @@ private:
     juce::Rectangle<int> eqBypassRect()    const;
     juce::Rectangle<int> spatBypassRect()  const;
     juce::Rectangle<int> instanceListRect() const;
+    juce::Rectangle<int> masterRect()       const;
 
     void timerCallback() override;
 

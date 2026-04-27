@@ -139,8 +139,8 @@ void MixSuiteProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     eqAnalyser_.pushSamples(L, R ? R : L, n);
     hintsAnalyser_.pushSamples(L, R ? R : L, n);
 
-    // --- Spatial stage ---
-    if (spatialEnabled_)
+    // --- Spatial stage (skipped for master tracks) ---
+    if (spatialEnabled_ && trackState_.mode != TrackState::Mode::Master)
     {
         spatialDSP_.syncParams();
         spatialDSP_.processBlock(L, R ? R : L, n);
@@ -209,6 +209,7 @@ void MixSuiteProcessor::getStateInformation (juce::MemoryBlock& dest)
     spatXml->setAttribute("isPanMode", trackState_.mode == TrackState::Mode::Pan ? 1 : 0);
     spatXml->setAttribute("eqEnabled",      eqEnabled_      ? 1 : 0);
     spatXml->setAttribute("spatialEnabled", spatialEnabled_ ? 1 : 0);
+    spatXml->setAttribute("isMaster",       trackState_.mode == TrackState::Mode::Master ? 1 : 0);
     spatXml->setAttribute("trackColourARGB", (int)SharedAnalyserState::trackColour(slotIndex_).getARGB());
 
     copyXmlToBinary(root, dest);
@@ -234,8 +235,11 @@ void MixSuiteProcessor::setStateInformation (const void* data, int size)
         trackState_.normHeight = (float)s->getDoubleAttribute("height",   0.25);
         trackState_.label      =        s->getStringAttribute("label",    trackState_.label);
         trackState_.priority   =        s->getIntAttribute   ("priority", 0);
-        trackState_.mode       = s->getIntAttribute("isPanMode", 0)
-                               ? TrackState::Mode::Pan : TrackState::Mode::Stereo;
+        if (s->getIntAttribute("isMaster", 0))
+            trackState_.mode = TrackState::Mode::Master;
+        else
+            trackState_.mode = s->getIntAttribute("isPanMode", 0)
+                             ? TrackState::Mode::Pan : TrackState::Mode::Stereo;
         eqEnabled_      = s->getIntAttribute("eqEnabled",      1) != 0;
         spatialEnabled_ = s->getIntAttribute("spatialEnabled", 1) != 0;
         int colourARGB  = s->getIntAttribute("trackColourARGB", -1);

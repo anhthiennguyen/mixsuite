@@ -59,6 +59,7 @@ int CanvasComponent::hitTest (const std::array<TrackState, kMaxTracks>& states,
     for (int i = kMaxTracks - 1; i >= 0; --i)
     {
         if (!states[i].active) continue;
+        if (states[i].mode == TrackState::Mode::Master) continue;
 
         // Skip mirror test when centred or in Pan mode (no mirror exists)
         bool centred = std::abs(states[i].normX - 0.5f) < 0.01f;
@@ -248,6 +249,7 @@ void CanvasComponent::paint (juce::Graphics& g)
     for (int i : drawOrder)
     {
         if (!states[i].active) continue;
+        if (states[i].mode == TrackState::Mode::Master) continue;
 
         bool isOwned         = (i == ownSlot);
         bool isDraggedReal   = (i == draggedSlot_ && !dragIsMirror_);
@@ -273,21 +275,29 @@ void CanvasComponent::paint (juce::Graphics& g)
     g.setColour(juce::Colours::white.withAlpha(0.40f));
     g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f)));
 
-    const auto&  ts       = proc_.getTrackState();
+    const auto&  ts        = proc_.getTrackState();
+    bool         isMaster  = (ts.mode == TrackState::Mode::Master);
     bool         isPanMode = (ts.mode == TrackState::Mode::Pan);
-    float        posWidth  = std::abs(ts.normX * 2.0f - 1.0f);
-    juce::String posStr   = isPanMode
-        ? ((ts.normX < 0.5f ? "L " : "R ") + juce::String((int)(posWidth * 100)) + "%")
-        : (juce::String((int)(posWidth * 100)) + "% wide");
-    juce::String bandName = kBands[juce::jlimit(0, kNumBands - 1,
-        (int)std::round(ts.getFractionalBand()))].name;
     int ownSlotDisplay = ownSlot >= 0 ? ownSlot + 1 : 0;
 
-    g.drawText("Slot " + juce::String(ownSlotDisplay) + ": "
-               + ts.label + "   [" + (isPanMode ? "Pan" : "Stereo") + "]"
-               + "   " + posStr + "   Band: " + bandName
-               + "   |  drag  |  edges: resize  |  dbl-click: rename  |  right-click: options",
-               6, h - 17, w - 12, 16, juce::Justification::centredLeft, false);
+    juce::String statusTxt = "Slot " + juce::String(ownSlotDisplay) + ": " + ts.label;
+    if (isMaster)
+    {
+        statusTxt += "   [MASTER — spatial bypassed, not shown in other tracks]";
+    }
+    else
+    {
+        float        posWidth = std::abs(ts.normX * 2.0f - 1.0f);
+        juce::String posStr   = isPanMode
+            ? ((ts.normX < 0.5f ? "L " : "R ") + juce::String((int)(posWidth * 100)) + "%")
+            : (juce::String((int)(posWidth * 100)) + "% wide");
+        juce::String bandName = kBands[juce::jlimit(0, kNumBands - 1,
+            (int)std::round(ts.getFractionalBand()))].name;
+        statusTxt += "   [" + juce::String(isPanMode ? "Pan" : "Stereo") + "]"
+                   + "   " + posStr + "   Band: " + bandName
+                   + "   |  drag  |  edges: resize  |  dbl-click: rename  |  right-click: options";
+    }
+    g.drawText(statusTxt, 6, h - 17, w - 12, 16, juce::Justification::centredLeft, false);
 }
 
 void CanvasComponent::resized() {}
