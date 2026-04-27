@@ -53,6 +53,12 @@ juce::Rectangle<int> MixSuiteEditor::spatBypassRect() const
     return { r.getRight() - 18, r.getY() + (r.getHeight() - 14) / 2, 14, 14 };
 }
 
+juce::Rectangle<int> MixSuiteEditor::instanceListRect() const
+{
+    constexpr int kW = 62, kH = 20;
+    return { getWidth() - kW - 10, (kTabBarH - kH) / 2, kW, kH };
+}
+
 //==============================================================================
 void MixSuiteEditor::drawTabBar (juce::Graphics& g) const
 {
@@ -123,6 +129,17 @@ void MixSuiteEditor::drawTabBar (juce::Graphics& g) const
 
     drawTab(eqTabRect(),   "EQ",      activeTab_ == ActiveTab::EQ,      proc_.eqEnabled_,      kEQColour);
     drawTab(spatTabRect(), "SPATIAL", activeTab_ == ActiveTab::Spatial,  proc_.spatialEnabled_, kSpatColour);
+
+    // Instance list button (top-right)
+    auto ir = instanceListRect().toFloat();
+    bool instOpen = InstanceListWindow::isOpen();
+    g.setColour(instOpen ? juce::Colour(0xff1a2d3a) : juce::Colour(0xff0d1824));
+    g.fillRoundedRectangle(ir, 4.0f);
+    g.setColour(juce::Colours::white.withAlpha(instOpen ? 0.28f : 0.13f));
+    g.drawRoundedRectangle(ir, 4.0f, 0.8f);
+    g.setFont(juce::Font(juce::FontOptions().withHeight(9.5f).withStyle("Bold")));
+    g.setColour(juce::Colours::white.withAlpha(instOpen ? 0.75f : 0.38f));
+    g.drawText("INSTANCES", ir.toNearestInt(), juce::Justification::centred);
 }
 
 void MixSuiteEditor::paint (juce::Graphics& g)
@@ -144,6 +161,14 @@ void MixSuiteEditor::mouseDown (const juce::MouseEvent& e)
     if (spatBypassRect().contains(e.getPosition()))
     {
         proc_.spatialEnabled_ = !proc_.spatialEnabled_;
+        repaint(0, 0, getWidth(), kTabBarH);
+        return;
+    }
+
+    // Instance list button
+    if (instanceListRect().contains(e.getPosition()))
+    {
+        InstanceListWindow::toggle();
         repaint(0, 0, getWidth(), kTabBarH);
         return;
     }

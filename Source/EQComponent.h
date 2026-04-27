@@ -61,5 +61,8 @@ private:
     juce::TextButton autoEqBtn_;
     void runAutoEQ();
 
+    juce::TextButton showTracksBtn_;
+    bool showOtherSpectra_ = true;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EQComponent)
 };

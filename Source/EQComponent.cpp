@@ -2,22 +2,37 @@
 #include "PluginProcessor.h"
 
 static const juce::Colour kBandColours[kNumEQBands] = {
-    juce::Colour(0xff4CAF50),
-    juce::Colour(0xff2196F3),
-    juce::Colour(0xffFF9800),
-    juce::Colour(0xff9C27B0),
-    juce::Colour(0xffF44336),
+    juce::Colour(0xff4CAF50),  // Band 1 – green
+    juce::Colour(0xff2196F3),  // Band 2 – blue
+    juce::Colour(0xffFF9800),  // Band 3 – orange
+    juce::Colour(0xff9C27B0),  // Band 4 – purple
+    juce::Colour(0xffF44336),  // Band 5 – red
+    juce::Colour(0xff00BCD4),  // Band 6 – cyan
+    juce::Colour(0xffE91E63),  // Band 7 – pink
 };
 
 EQComponent::EQComponent (MixSuiteProcessor& proc) : proc_(proc)
 {
-    autoEqBtn_.setButtonText("CLEAN");
-    autoEqBtn_.setColour(juce::TextButton::buttonColourId,  juce::Colour(0xff0f1e2d));
-    autoEqBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff29b6f6));
-    autoEqBtn_.setColour(juce::TextButton::textColourOffId,  juce::Colour(0xff29b6f6).withAlpha(0.85f));
-    autoEqBtn_.setColour(juce::TextButton::textColourOnId,   juce::Colours::white);
+    autoEqBtn_.setButtonText("TRIM");
+    autoEqBtn_.setColour(juce::TextButton::buttonColourId,   juce::Colour(0xff0c1520));
+    autoEqBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff1a2d3a));
+    autoEqBtn_.setColour(juce::TextButton::textColourOffId,  juce::Colours::white.withAlpha(0.35f));
+    autoEqBtn_.setColour(juce::TextButton::textColourOnId,   juce::Colours::white.withAlpha(0.55f));
     autoEqBtn_.onClick = [this] { runAutoEQ(); };
     addAndMakeVisible(autoEqBtn_);
+
+    showTracksBtn_.setButtonText("TRACKS");
+    showTracksBtn_.setClickingTogglesState(true);
+    showTracksBtn_.setToggleState(true, juce::dontSendNotification);
+    showTracksBtn_.setColour(juce::TextButton::buttonColourId,   juce::Colour(0xff0c1520));
+    showTracksBtn_.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff112233));
+    showTracksBtn_.setColour(juce::TextButton::textColourOffId,  juce::Colours::white.withAlpha(0.22f));
+    showTracksBtn_.setColour(juce::TextButton::textColourOnId,   juce::Colours::white.withAlpha(0.50f));
+    showTracksBtn_.onClick = [this] {
+        showOtherSpectra_ = showTracksBtn_.getToggleState();
+        repaint();
+    };
+    addAndMakeVisible(showTracksBtn_);
 
     startTimerHz(30);
 }
@@ -81,27 +96,33 @@ float EQComponent::getDbAtFreq (const SpectrumAnalyser& sa, float freq)
 
 float EQComponent::computeMagnitudeAt (float freq) const
 {
-    double sr  = proc_.getPluginSampleRate();
-    double mag = 1.0;
+    double sr   = proc_.getPluginSampleRate();
+    double mag  = 1.0;
     auto& apvts = proc_.getAPVTS();
 
     for (int i = 0; i < kNumEQBands; ++i)
     {
         juce::String p = "band" + juce::String(i) + "_";
-        bool  on   = *apvts.getRawParameterValue(p + "enabled") > 0.5f;
+        bool  on = *apvts.getRawParameterValue(p + "enabled") > 0.5f;
         if (!on) continue;
         float f    = *apvts.getRawParameterValue(p + "freq");
         float gain = *apvts.getRawParameterValue(p + "gain");
         float q    = *apvts.getRawParameterValue(p + "q");
-        float gl   = juce::Decibels::decibelsToGain(gain);
+        int typeIdx = juce::jlimit(0, 6, (int)*apvts.getRawParameterValue(p + "type"));
+        auto bandType = (BandType)typeIdx;
 
+        double gl = (double)juce::Decibels::decibelsToGain(gain);
         juce::ReferenceCountedObjectPtr<juce::dsp::IIR::Coefficients<float>> c;
-        if      (kEQBandTypes[i] == BandType::LowShelf)
-            c = juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sr, (double)f, (double)q, (double)gl);
-        else if (kEQBandTypes[i] == BandType::HighShelf)
-            c = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, (double)f, (double)q, (double)gl);
-        else
-            c = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sr, (double)f, (double)q, (double)gl);
+        switch (bandType)
+        {
+            case BandType::LowShelf:  c = juce::dsp::IIR::Coefficients<float>::makeLowShelf   (sr, (double)f, (double)q, gl); break;
+            case BandType::HighShelf: c = juce::dsp::IIR::Coefficients<float>::makeHighShelf  (sr, (double)f, (double)q, gl); break;
+            case BandType::LowCut:    c = juce::dsp::IIR::Coefficients<float>::makeHighPass   (sr, (double)f, (double)q); break;
+            case BandType::HighCut:   c = juce::dsp::IIR::Coefficients<float>::makeLowPass    (sr, (double)f, (double)q); break;
+            case BandType::Notch:     c = juce::dsp::IIR::Coefficients<float>::makeNotch      (sr, (double)f, (double)q); break;
+            case BandType::BandPass:  c = juce::dsp::IIR::Coefficients<float>::makeBandPass   (sr, (double)f, (double)q); break;
+            default:                  c = juce::dsp::IIR::Coefficients<float>::makePeakFilter (sr, (double)f, (double)q, gl); break;
+        }
 
         mag *= c->getMagnitudeForFrequency((double)freq, sr);
     }
@@ -146,6 +167,8 @@ void EQComponent::drawGrid (juce::Graphics& g, float w, float h) const
 // Heat map: sweeps orange → red where 2+ tracks have energy in the same band.
 void EQComponent::drawMudOverlay (juce::Graphics& g, float w, float h) const
 {
+    if (!showOtherSpectra_) return;
+
     auto procs = SharedAnalyserState::getInstance()->getProcessors();
 
     // Count active tracks
@@ -192,8 +215,9 @@ void EQComponent::drawAllSpectra (juce::Graphics& g, float w, float h) const
     {
         auto* p = procs[slot];
         if (!p) continue;
-
         bool isOwn = (slot == ownSlot);
+        if (!isOwn && !showOtherSpectra_) continue;
+
         auto& sa   = p->getEQAnalyser();
         double sr  = sa.getSampleRate();
         juce::Colour col = SharedAnalyserState::trackColour(slot);
@@ -288,23 +312,27 @@ void EQComponent::drawNodes (juce::Graphics& g, float w, float h) const
     {
         juce::String p = "band" + juce::String(i) + "_";
         bool  on   = *apvts.getRawParameterValue(p + "enabled") > 0.5f;
+        if (!on) continue;
+
         float freq = *apvts.getRawParameterValue(p + "freq");
         float gain = *apvts.getRawParameterValue(p + "gain");
+        int typeIdx = juce::jlimit(0, 6, (int)*apvts.getRawParameterValue(p + "type"));
+        bool isGainless = (typeIdx >= 3);  // LowCut, HighCut, Notch, BandPass
         float nx   = freqToX(freq, w);
-        float ny   = eqDbToY(gain, h);
+        float ny   = eqDbToY(isGainless ? 0.0f : gain, h);
         juce::Colour col = kBandColours[i];
 
-        g.setColour(col.withAlpha(on ? 0.22f : 0.07f));
+        g.setColour(col.withAlpha(0.22f));
         g.drawLine(nx, y0, nx, ny, 1.0f);
 
         float r = (i == hoveredBand_ || i == draggedBand_) ? 7.5f : 6.0f;
-        g.setColour(col.withAlpha(on ? (i == draggedBand_ ? 1.0f : 0.82f) : 0.30f));
+        g.setColour(col.withAlpha(i == draggedBand_ ? 1.0f : 0.82f));
         g.fillEllipse(nx - r, ny - r, r * 2.0f, r * 2.0f);
-        g.setColour(juce::Colours::white.withAlpha(on ? 0.65f : 0.18f));
+        g.setColour(juce::Colours::white.withAlpha(0.65f));
         g.drawEllipse(nx - r, ny - r, r * 2.0f, r * 2.0f, 1.0f);
 
         g.setFont(juce::Font(juce::FontOptions().withHeight(8.0f).withStyle("Bold")));
-        g.setColour(juce::Colours::white.withAlpha(on ? 0.90f : 0.35f));
+        g.setColour(juce::Colours::white.withAlpha(0.90f));
         g.drawText(juce::String(i + 1), (int)(nx - r), (int)(ny - r),
                    (int)(r * 2), (int)(r * 2), juce::Justification::centred);
     }
@@ -317,9 +345,12 @@ int EQComponent::bandAtPoint (juce::Point<float> pt, float w, float h) const
     for (int i = 0; i < kNumEQBands; ++i)
     {
         juce::String p = "band" + juce::String(i) + "_";
+        if (*apvts.getRawParameterValue(p + "enabled") < 0.5f) continue;
         float freq = *apvts.getRawParameterValue(p + "freq");
         float gain = *apvts.getRawParameterValue(p + "gain");
-        float d = std::hypot(pt.x - freqToX(freq, w), pt.y - eqDbToY(gain, h));
+        int typeIdx = juce::jlimit(0, 6, (int)*apvts.getRawParameterValue(p + "type"));
+        bool isGainless = (typeIdx >= 3);
+        float d = std::hypot(pt.x - freqToX(freq, w), pt.y - eqDbToY(isGainless ? 0.0f : gain, h));
         if (d < 12.0f) return i;
     }
     return -1;
@@ -327,8 +358,55 @@ int EQComponent::bandAtPoint (juce::Point<float> pt, float w, float h) const
 
 void EQComponent::mouseDown (const juce::MouseEvent& e)
 {
+    float w = (float)getWidth(), h = (float)(getHeight() - 20);
+
     if (e.mods.isRightButtonDown())
     {
+        int clickedBand = bandAtPoint(e.position, w, h);
+
+        if (clickedBand >= 0)
+        {
+            juce::String typeParamId = "band" + juce::String(clickedBand) + "_type";
+            int currentType = juce::jlimit(0, 6, (int)*proc_.getAPVTS().getRawParameterValue(typeParamId));
+
+            juce::PopupMenu menu;
+            menu.addItem(1, "Bell",       true, currentType == 0);
+            menu.addItem(2, "Low Shelf",  true, currentType == 1);
+            menu.addItem(3, "High Shelf", true, currentType == 2);
+            menu.addItem(4, "Low Cut",    true, currentType == 3);
+            menu.addItem(5, "High Cut",   true, currentType == 4);
+            menu.addItem(6, "Notch",      true, currentType == 5);
+            menu.addItem(7, "Band Pass",  true, currentType == 6);
+            menu.addSeparator();
+            menu.addItem(8, "Remove Band");
+
+            juce::Component::SafePointer<EQComponent> safe(this);
+            auto screenPt = localPointToGlobal(e.getPosition());
+            menu.showMenuAsync(juce::PopupMenu::Options()
+                .withTargetScreenArea(juce::Rectangle<int>(screenPt.x, screenPt.y, 1, 1)),
+                [safe, clickedBand, typeParamId](int result) {
+                    if (!safe || result == 0) return;
+                    if (result >= 1 && result <= 7)
+                    {
+                        auto& apvts = safe->proc_.getAPVTS();
+                        if (auto* p = apvts.getParameter(typeParamId))
+                            p->setValueNotifyingHost(p->convertTo0to1((float)(result - 1)));
+                    }
+                    else if (result == 8)
+                    {
+                        juce::String bp = "band" + juce::String(clickedBand) + "_";
+                        auto& apvts = safe->proc_.getAPVTS();
+                        if (auto* ep = apvts.getParameter(bp + "enabled"))
+                            ep->setValueNotifyingHost(0.0f);
+                        if (auto* gp = apvts.getParameter(bp + "gain"))
+                            gp->setValueNotifyingHost(gp->convertTo0to1(0.0f));
+                    }
+                    safe->repaint();
+                });
+            return;
+        }
+
+        // Right-click on empty area: colour picker
         int slot = proc_.getSlotIndex();
         if (slot < 0) return;
         auto picker = std::make_unique<TrackColourPicker>(slot, [this] { repaint(); });
@@ -336,7 +414,32 @@ void EQComponent::mouseDown (const juce::MouseEvent& e)
         juce::CallOutBox::launchAsynchronously(std::move(picker), anchor, nullptr);
         return;
     }
-    draggedBand_ = bandAtPoint(e.position, (float)getWidth(), (float)(getHeight() - 20));
+
+    // Left-click: hit existing band or create a new one
+    draggedBand_ = bandAtPoint(e.position, w, h);
+    if (draggedBand_ < 0)
+    {
+        auto& apvts = proc_.getAPVTS();
+        int newBand = -1;
+        for (int i = 0; i < kNumEQBands; ++i)
+        {
+            juce::String bp = "band" + juce::String(i) + "_";
+            if (*apvts.getRawParameterValue(bp + "enabled") < 0.5f) { newBand = i; break; }
+        }
+        if (newBand >= 0)
+        {
+            juce::String bp = "band" + juce::String(newBand) + "_";
+            float newFreq = juce::jlimit(kMinFreq, kMaxFreq, xToFreq(e.position.x, w));
+            float newGain = juce::jlimit(-kEqRange, kEqRange, yToEqDb(e.position.y, h));
+            if (auto* fp = apvts.getParameter(bp + "freq"))
+                fp->setValueNotifyingHost(fp->convertTo0to1(newFreq));
+            if (auto* gp = apvts.getParameter(bp + "gain"))
+                gp->setValueNotifyingHost(gp->convertTo0to1(newGain));
+            if (auto* ep = apvts.getParameter(bp + "enabled"))
+                ep->setValueNotifyingHost(1.0f);
+            draggedBand_ = newBand;
+        }
+    }
     repaint();
 }
 
@@ -346,11 +449,18 @@ void EQComponent::mouseDrag (const juce::MouseEvent& e)
     float w = (float)getWidth(), h = (float)(getHeight() - 20);
     juce::String p = "band" + juce::String(draggedBand_) + "_";
     float newFreq = juce::jlimit(kMinFreq, kMaxFreq, xToFreq(juce::jlimit(0.0f, w, e.position.x), w));
-    float newGain = juce::jlimit(-kEqRange, kEqRange, yToEqDb(juce::jlimit(0.0f, h, e.position.y), h));
     if (auto* fp = proc_.getAPVTS().getParameter(p + "freq"))
         fp->setValueNotifyingHost(fp->convertTo0to1(newFreq));
-    if (auto* gp = proc_.getAPVTS().getParameter(p + "gain"))
-        gp->setValueNotifyingHost(gp->convertTo0to1(newGain));
+
+    auto& apvts = proc_.getAPVTS();
+    bool isHpLp = (draggedBand_ == 0 && *apvts.getRawParameterValue("band0_type") > 0.5f)
+               || (draggedBand_ == 6 && *apvts.getRawParameterValue("band6_type") > 0.5f);
+    if (!isHpLp)
+    {
+        float newGain = juce::jlimit(-kEqRange, kEqRange, yToEqDb(juce::jlimit(0.0f, h, e.position.y), h));
+        if (auto* gp = apvts.getParameter(p + "gain"))
+            gp->setValueNotifyingHost(gp->convertTo0to1(newGain));
+    }
     repaint();
 }
 
@@ -408,34 +518,57 @@ void EQComponent::paint (juce::Graphics& g)
         float freq = *apvts.getRawParameterValue(p + "freq");
         float gain = *apvts.getRawParameterValue(p + "gain");
         float q    = *apvts.getRawParameterValue(p + "q");
-        static const char* kTypes[] = { "Low Shelf","Peak","Peak","Peak","High Shelf" };
-        txt = "Band " + juce::String(show + 1) + " [" + kTypes[show] + "]"
-            + "   Freq: " + juce::String((int)freq) + " Hz"
-            + "   Gain: " + (gain >= 0 ? "+" : "") + juce::String(gain, 1) + " dB"
-            + "   Q: " + juce::String(q, 2)
-            + "   (scroll to adjust Q)";
+
+        static const char* kTypeNames[] = { "Bell", "Low Shelf", "High Shelf", "Low Cut", "High Cut", "Notch", "Band Pass" };
+        int typeIdx = juce::jlimit(0, 6, (int)*apvts.getRawParameterValue("band" + juce::String(show) + "_type"));
+        juce::String typeName = kTypeNames[typeIdx];
+        bool isHpLp = (typeIdx >= 3);
+
+        txt = "Band " + juce::String(show + 1) + " [" + typeName + "]"
+            + "   Freq: " + juce::String((int)freq) + " Hz";
+        if (!isHpLp)
+            txt += "   Gain: " + (gain >= 0 ? juce::String("+") : juce::String(""))
+                 + juce::String(gain, 1) + " dB";
+        txt += "   Q: " + juce::String(q, 2)
+            + "   (scroll: Q  |  right-click: filter type)";
     }
     else
     {
         int n = 0;
         for (auto* p2 : SharedAnalyserState::getInstance()->getProcessors())
             if (p2) ++n;
+
+        int activeBands = 0;
+        auto& apvts2 = proc_.getAPVTS();
+        for (int i = 0; i < kNumEQBands; ++i)
+        {
+            juce::String bp = "band" + juce::String(i) + "_";
+            if (*apvts2.getRawParameterValue(bp + "enabled") > 0.5f) ++activeBands;
+        }
+
         txt = "VisualEQ  |  Track " + juce::String(proc_.getSlotIndex() + 1)
-            + " of " + juce::String(n)
-            + "   |  drag nodes: freq + gain   |   scroll: Q"
-            + (n >= 2 ? "   |  orange/red = frequency clash" : "");
+            + " of " + juce::String(n);
+        if (activeBands == 0)
+            txt += "   |  click anywhere to add a band";
+        else if (activeBands < kNumEQBands)
+            txt += "   |  click to add   right-click band to remove   scroll: Q"
+                + (n >= 2 ? juce::String("   |  orange/red = clash") : juce::String());
+        else
+            txt += "   |  right-click a band to remove   scroll: Q"
+                + (n >= 2 ? juce::String("   |  orange/red = clash") : juce::String());
     }
     g.drawText(txt, 6, (int)h + 1, (int)w - 12, 18, juce::Justification::centredLeft);
 }
 
 void EQComponent::resized()
 {
-    // Two buttons side by side, below the analysis panel (max height ~85px at y=10)
-    constexpr int kPanelW = 230;
-    constexpr int kBtnH   = 22;
-    constexpr int kBtnY   = 10 + 90;  // below worst-case 3-hint panel
-    int btnX = getWidth() - kPanelW - 10;
-    autoEqBtn_.setBounds(btnX, kBtnY, kPanelW, kBtnH);
+    constexpr int kBtnW  = 48;
+    constexpr int kBtn2W = 58;
+    constexpr int kBtnH  = 14;
+    constexpr int kGap   = 4;
+    int by = getHeight() - 20 - kBtnH - 4;
+    autoEqBtn_   .setBounds(getWidth() - kBtnW - 5,               by, kBtnW,  kBtnH);
+    showTracksBtn_.setBounds(getWidth() - kBtnW - 5 - kGap - kBtn2W, by, kBtn2W, kBtnH);
 }
 
 //==============================================================================
@@ -593,69 +726,21 @@ juce::String EQComponent::computeAnalysisHints() const
 //==============================================================================
 void EQComponent::runAutoEQ()
 {
-    // Cut frequencies outside the signal's useful range (rumble below, hiss above)
-    auto& sa  = proc_.getHintsAnalyser();
-    double sr = sa.getSampleRate();
-    if (sr < 1.0) return;
-
-    const auto& sp  = sa.getSpectrum();
-    float binHz = (float)sr / (float)SpectrumAnalyser::fftSize;
-
-    auto avgDb = [&](float lo, float hi) -> float
-    {
-        int binLo = juce::jmax(1, (int)(lo / binHz));
-        int binHi = juce::jmin(SpectrumAnalyser::numBins - 1, (int)(hi / binHz));
-        if (binLo >= binHi) return -100.0f;
-        double sum = 0.0; int cnt = 0;
-        for (int i = binLo; i <= binHi; ++i)
-        { sum += (double)juce::Decibels::decibelsToGain(sp[i], -100.0f); ++cnt; }
-        return cnt > 0 ? juce::Decibels::gainToDecibels((float)(sum / cnt), -100.0f) : -100.0f;
-    };
-
-    float ref = avgDb(500.0f, 5000.0f);
-    if (ref < -50.0f) return;
-
-    float threshold = ref - 18.0f;  // 18 dB below mid-range = no useful signal
-
-    // Scan upward to find the first frequency band with real signal
-    float hpFreq = -1.0f;
-    for (float f = 20.0f; f < 500.0f; f *= 1.2f)
-    {
-        if (avgDb(f, f * 1.2f) > threshold) { hpFreq = f; break; }
-    }
-
-    // Scan downward to find the highest frequency band with real signal
-    float lpFreq = -1.0f;
-    for (float f = 20000.0f; f > 2000.0f; f /= 1.2f)
-    {
-        if (avgDb(f / 1.2f, f) > threshold) { lpFreq = f; break; }
-    }
-
     auto& apvts = proc_.getAPVTS();
     auto setParam = [&](const juce::String& id, float val) {
         if (auto* p = apvts.getParameter(id))
             p->setValueNotifyingHost(p->convertTo0to1(val));
     };
 
-    // Band 0 (low shelf): cut rumble below where signal starts
-    // Only engage if signal doesn't start right at the bottom (>40 Hz)
-    if (hpFreq > 40.0f)
-    {
-        float shelfFreq = juce::jlimit(20.0f, 400.0f, hpFreq * 0.8f);
-        setParam("band0_freq",    shelfFreq);
-        setParam("band0_gain",    -15.0f);
-        setParam("band0_enabled", 1.0f);
-    }
+    // Band 0: Low Cut at 40 Hz
+    setParam("band0_freq",    40.0f);
+    setParam("band0_type",    3.0f);  // LowCut index
+    setParam("band0_enabled", 1.0f);
 
-    // Band 4 (high shelf): cut hiss above where signal ends
-    // Only engage if signal doesn't extend to the very top (<17 kHz)
-    if (lpFreq > 0.0f && lpFreq < 17000.0f)
-    {
-        float shelfFreq = juce::jlimit(3000.0f, 20000.0f, lpFreq * 1.2f);
-        setParam("band4_freq",    shelfFreq);
-        setParam("band4_gain",    -15.0f);
-        setParam("band4_enabled", 1.0f);
-    }
+    // Band 6: High Cut at 18 kHz
+    setParam("band6_freq",    18000.0f);
+    setParam("band6_type",    4.0f);  // HighCut index
+    setParam("band6_enabled", 1.0f);
 
     repaint();
 }

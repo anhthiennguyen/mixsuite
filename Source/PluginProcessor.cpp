@@ -7,6 +7,7 @@
 juce::AudioProcessorValueTreeState::ParameterLayout MixSuiteProcessor::createParams()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
+    juce::StringArray typeChoices { "Bell", "Low Shelf", "High Shelf", "Low Cut", "High Cut", "Notch", "Band Pass" };
     for (int i = 0; i < kNumEQBands; ++i)
     {
         juce::String p = "band" + juce::String(i) + "_";
@@ -28,7 +29,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout MixSuiteProcessor::createPar
         layout.add(std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID(p + "enabled", 1),
             "Band " + juce::String(i + 1) + " On",
-            true));
+            false));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID(p + "type", 1),
+            "Band " + juce::String(i + 1) + " Type",
+            typeChoices,
+            0));  // Bell by default
     }
     return layout;
 }
@@ -78,20 +84,34 @@ void MixSuiteProcessor::updateEQFilters()
 {
     for (int i = 0; i < kNumEQBands; ++i)
     {
-        juce::String p    = "band" + juce::String(i) + "_";
+        juce::String p = "band" + juce::String(i) + "_";
         float freq = *apvts_.getRawParameterValue(p + "freq");
         float gain = *apvts_.getRawParameterValue(p + "gain");
         float q    = *apvts_.getRawParameterValue(p + "q");
         bool  on   = *apvts_.getRawParameterValue(p + "enabled") > 0.5f;
-        float gl   = (on && eqEnabled_) ? juce::Decibels::decibelsToGain(gain) : 1.0f;
+
+        int typeIdx = juce::jlimit(0, 6, (int)*apvts_.getRawParameterValue(p + "type"));
+        auto bandType = (BandType)typeIdx;
 
         juce::ReferenceCountedObjectPtr<FilterCoefs> c;
-        if      (kEQBandTypes[i] == BandType::LowShelf)
-            c = FilterCoefs::makeLowShelf  (sampleRate_, (double)freq, (double)q, (double)gl);
-        else if (kEQBandTypes[i] == BandType::HighShelf)
-            c = FilterCoefs::makeHighShelf (sampleRate_, (double)freq, (double)q, (double)gl);
+        if (!on || !eqEnabled_)
+        {
+            c = FilterCoefs::makePeakFilter(sampleRate_, (double)freq, (double)q, 1.0);
+        }
         else
-            c = FilterCoefs::makePeakFilter(sampleRate_, (double)freq, (double)q, (double)gl);
+        {
+            double gl = juce::Decibels::decibelsToGain(gain);
+            switch (bandType)
+            {
+                case BandType::LowShelf:  c = FilterCoefs::makeLowShelf   (sampleRate_, (double)freq, (double)q, gl); break;
+                case BandType::HighShelf: c = FilterCoefs::makeHighShelf  (sampleRate_, (double)freq, (double)q, gl); break;
+                case BandType::LowCut:    c = FilterCoefs::makeHighPass   (sampleRate_, (double)freq, (double)q); break;
+                case BandType::HighCut:   c = FilterCoefs::makeLowPass    (sampleRate_, (double)freq, (double)q); break;
+                case BandType::Notch:     c = FilterCoefs::makeNotch      (sampleRate_, (double)freq, (double)q); break;
+                case BandType::BandPass:  c = FilterCoefs::makeBandPass   (sampleRate_, (double)freq, (double)q); break;
+                default:                  c = FilterCoefs::makePeakFilter (sampleRate_, (double)freq, (double)q, gl); break;
+            }
+        }
 
         *filtersL_[i].coefficients = *c;
         *filtersR_[i].coefficients = *c;

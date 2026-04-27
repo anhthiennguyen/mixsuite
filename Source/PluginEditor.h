@@ -4,6 +4,7 @@
 #include "EQComponent.h"
 #include "CanvasComponent.h"
 #include "SpectrumComponent.h"
+#include "InstanceListComponent.h"
 
 class MixSuiteEditor : public juce::AudioProcessorEditor,
                         private juce::Timer
@@ -34,8 +35,9 @@ private:
 
     juce::Rectangle<int> eqTabRect()   const;
     juce::Rectangle<int> spatTabRect() const;
-    juce::Rectangle<int> eqBypassRect()   const;
-    juce::Rectangle<int> spatBypassRect() const;
+    juce::Rectangle<int> eqBypassRect()    const;
+    juce::Rectangle<int> spatBypassRect()  const;
+    juce::Rectangle<int> instanceListRect() const;
 
     void timerCallback() override;
 

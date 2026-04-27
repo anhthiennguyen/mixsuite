@@ -34,6 +34,7 @@ target_sources(MixSuite PRIVATE
     Source/SharedMixerState.cpp
     Source/CanvasComponent.cpp
     Source/SpectrumComponent.cpp
+    Source/InstanceListComponent.cpp
 )
 
 target_compile_definitions(MixSuite PUBLIC

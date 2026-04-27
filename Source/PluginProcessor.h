@@ -4,14 +4,11 @@
 #include "TrackState.h"
 #include "DSPEngine.h"
 
-static constexpr int kNumEQBands = 5;
+static constexpr int kNumEQBands = 7;
 
-enum class BandType { LowShelf, Peak, HighShelf };
-static constexpr BandType kEQBandTypes[kNumEQBands] = {
-    BandType::LowShelf, BandType::Peak, BandType::Peak, BandType::Peak, BandType::HighShelf
-};
-static constexpr float kEQDefaultFreqs[kNumEQBands] = { 80.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f };
-static constexpr float kEQDefaultQs[kNumEQBands]    = { 0.7f,  1.0f,   1.0f,    1.0f,    0.7f };
+enum class BandType { Bell=0, LowShelf=1, HighShelf=2, LowCut=3, HighCut=4, Notch=5, BandPass=6 };
+static constexpr float kEQDefaultFreqs[kNumEQBands] = { 80.0f, 200.0f, 500.0f, 1000.0f, 3000.0f, 8000.0f, 12000.0f };
+static constexpr float kEQDefaultQs[kNumEQBands]    = { 0.7f,  1.0f,   1.0f,   1.0f,    1.0f,    1.0f,    0.7f };
 
 class MixSuiteProcessor : public juce::AudioProcessor
 {
