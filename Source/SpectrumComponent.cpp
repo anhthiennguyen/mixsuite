@@ -121,44 +121,33 @@ void SpectrumComponent::drawCurve (juce::Graphics& g, int slot, float w, float h
     const auto& spectrum = analyser->getSpectrum();
     const double sr = analyser->getSampleRate();
 
-    juce::Path path;
+    juce::Path strokePath;
     bool started = false;
+    float firstX = 0.0f, lastX = 0.0f;
 
     for (int i = 1; i < SpectrumAnalyser::numBins; ++i)
     {
         float freq = (float)i * (float)sr / (float)SpectrumAnalyser::fftSize;
         if (freq < kMinFreq || freq > kMaxFreq) continue;
-
         float x = freqToX(freq, w);
         float y = juce::jlimit(0.0f, h, dbToY(spectrum[i], h));
-
-        if (!started) { path.startNewSubPath(x, y); started = true; }
-        else          path.lineTo(x, y);
+        if (!started) { strokePath.startNewSubPath(x, y); firstX = x; started = true; }
+        else          strokePath.lineTo(x, y);
+        lastX = x;
     }
 
     if (!started) return;
 
-    // Filled area under the curve
-    path.lineTo(freqToX(kMaxFreq, w), h);
-    path.lineTo(freqToX(kMinFreq, w), h);
-    path.closeSubPath();
-
     auto colour = SharedMixerState::trackColour(slot);
-    g.setColour(colour.withAlpha(0.12f));
-    g.fillPath(path);
 
-    // Stroke on top
-    juce::Path strokePath;
-    started = false;
-    for (int i = 1; i < SpectrumAnalyser::numBins; ++i)
-    {
-        float freq = (float)i * (float)sr / (float)SpectrumAnalyser::fftSize;
-        if (freq < kMinFreq || freq > kMaxFreq) continue;
-        float x = freqToX(freq, w);
-        float y = juce::jlimit(0.0f, h, dbToY(spectrum[i], h));
-        if (!started) { strokePath.startNewSubPath(x, y); started = true; }
-        else          strokePath.lineTo(x, y);
-    }
+    // Fill: copy open path, close it, draw first so stroke renders on top
+    juce::Path fillPath (strokePath);
+    fillPath.lineTo(lastX, h);
+    fillPath.lineTo(firstX, h);
+    fillPath.closeSubPath();
+    g.setColour(colour.withAlpha(0.12f));
+    g.fillPath(fillPath);
+
     g.setColour(colour.withAlpha(0.75f));
     g.strokePath(strokePath, juce::PathStrokeType(1.5f));
 }

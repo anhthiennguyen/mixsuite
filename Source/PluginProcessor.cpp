@@ -45,6 +45,17 @@ MixSuiteProcessor::MixSuiteProcessor()
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "MixSuite", createParams())
 {
+    // Cache raw param pointers once so the audio thread never does string lookups
+    for (int i = 0; i < kNumEQBands; ++i)
+    {
+        juce::String p = "band" + juce::String(i) + "_";
+        pFreq_[i]    = apvts_.getRawParameterValue(p + "freq");
+        pGain_[i]    = apvts_.getRawParameterValue(p + "gain");
+        pQ_[i]       = apvts_.getRawParameterValue(p + "q");
+        pEnabled_[i] = apvts_.getRawParameterValue(p + "enabled");
+        pType_[i]    = apvts_.getRawParameterValue(p + "type");
+    }
+
     trackState_.computeDSP();
     int eqSlot   = SharedAnalyserState::getInstance()->registerProcessor(this);
     int spatSlot = SharedMixerState::getInstance()->registerProcessor(this, trackState_);
@@ -69,6 +80,7 @@ void MixSuiteProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     for (auto& f : filtersR_) { f.prepare(spec); f.reset(); }
     eqAnalyser_.prepare(sampleRate);
     hintsAnalyser_.prepare(sampleRate);
+    for (auto& s : lastBand_) s.freq = -1.f;  // force full rebuild after rate change
     updateEQFilters();
     spatialDSP_.prepare(sampleRate, samplesPerBlock);
     trackState_.computeDSP();
@@ -84,14 +96,18 @@ void MixSuiteProcessor::updateEQFilters()
 {
     for (int i = 0; i < kNumEQBands; ++i)
     {
-        juce::String p = "band" + juce::String(i) + "_";
-        float freq = *apvts_.getRawParameterValue(p + "freq");
-        float gain = *apvts_.getRawParameterValue(p + "gain");
-        float q    = *apvts_.getRawParameterValue(p + "q");
-        bool  on   = *apvts_.getRawParameterValue(p + "enabled") > 0.5f;
+        float freq = *pFreq_[i];
+        float gain = *pGain_[i];
+        float q    = *pQ_[i];
+        bool  on   = *pEnabled_[i] > 0.5f;
+        int   type = juce::jlimit(0, 6, (int)*pType_[i]);
 
-        int typeIdx = juce::jlimit(0, 6, (int)*apvts_.getRawParameterValue(p + "type"));
-        auto bandType = (BandType)typeIdx;
+        // Skip rebuild if nothing changed — avoids heap allocation on every block
+        auto& snap = lastBand_[i];
+        if (freq == snap.freq && gain == snap.gain && q == snap.q
+                && on == snap.on && type == snap.type && eqEnabled_ == snap.eqEn)
+            continue;
+        snap = { freq, gain, q, type, on, eqEnabled_ };
 
         juce::ReferenceCountedObjectPtr<FilterCoefs> c;
         if (!on || !eqEnabled_)
@@ -101,7 +117,7 @@ void MixSuiteProcessor::updateEQFilters()
         else
         {
             double gl = juce::Decibels::decibelsToGain(gain);
-            switch (bandType)
+            switch ((BandType)type)
             {
                 case BandType::LowShelf:  c = FilterCoefs::makeLowShelf   (sampleRate_, (double)freq, (double)q, gl); break;
                 case BandType::HighShelf: c = FilterCoefs::makeHighShelf  (sampleRate_, (double)freq, (double)q, gl); break;

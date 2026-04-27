@@ -13,7 +13,7 @@ MixSuiteEditor::MixSuiteEditor (MixSuiteProcessor& p)
     addAndMakeVisible(eqView_);
     addChildComponent(canvasView_);
     addChildComponent(spectrumView_);
-    setSize(820, 660);
+    setSize(1000, 660);
     setResizable(true, true);
     setResizeLimits(600, 480, 1600, 1000);
     startTimerHz(30);
@@ -87,10 +87,6 @@ void MixSuiteEditor::drawTabBar (juce::Graphics& g) const
     g.setColour(juce::Colours::white.withAlpha(0.90f));
     g.drawText("MIXSUITE", 14, 0, 110, kTabBarH, juce::Justification::centredLeft);
 
-    // Signal-chain arrow hint
-    g.setFont(juce::Font(juce::FontOptions().withHeight(9.0f)));
-    g.setColour(juce::Colours::white.withAlpha(0.25f));
-    g.drawText("EQ  \xe2\x86\x92  Spatial", 130, 0, 120, kTabBarH, juce::Justification::centredLeft);
 
     // Draw a tab
     auto drawTab = [&](juce::Rectangle<int> rect, const char* label,

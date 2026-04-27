@@ -4,7 +4,7 @@ project(MixSuite VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_subdirectory($ENV{HOME}/JUCE JUCE_build)
+add_subdirectory($ENV{USERPROFILE}/juce-8.0.12-windows/JUCE JUCE_build)
 
 juce_add_plugin(MixSuite
     COMPANY_NAME            "anhthientbd"

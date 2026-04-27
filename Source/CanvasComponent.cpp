@@ -3,24 +3,12 @@
 #include "SharedMixerState.h"
 #include "SharedAnalyserState.h"
 
-static juce::Colour bandColour (int band)
-{
-    static const juce::Colour colours[kNumBands] = {
-        juce::Colour(0xff1a1040),
-        juce::Colour(0xff0d2e50),
-        juce::Colour(0xff0a3328),
-        juce::Colour(0xff3d2800),
-        juce::Colour(0xff3d1200),
-    };
-    return colours[juce::jlimit(0, kNumBands - 1, band)];
-}
-
 //==============================================================================
 CanvasComponent::CanvasComponent (MixSuiteProcessor& proc)
     : proc_(proc)
 {
     setSize(640, 500);
-    startTimerHz(60);
+    startTimerHz(30);
 }
 
 CanvasComponent::~CanvasComponent() { stopTimer(); }
@@ -186,18 +174,6 @@ void CanvasComponent::paint (juce::Graphics& g)
 
     // ── BACKGROUND ───────────────────────────────────────────────────────────
     g.fillAll(juce::Colour(0xff070b10));
-
-    // Subtle per-band zone tints + 3-px coloured accent bar on the left edge
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        int   db = kNumBands - 1 - b;
-        float y0 = (float)(b * h) / kNumBands;
-        float y1 = (float)((b + 1) * h) / kNumBands;
-        g.setColour(bandColour(db).withAlpha(0.07f));
-        g.fillRect(juce::Rectangle<float>(0.f, y0, W, y1 - y0));
-        g.setColour(bandColour(db).withAlpha(0.55f));
-        g.fillRect(juce::Rectangle<float>(0.f, y0, 3.f, y1 - y0));
-    }
 
     // ── BAND SEPARATORS + FREQUENCY LABELS ───────────────────────────────────
     g.setFont(juce::Font(juce::FontOptions().withHeight(10.0f).withStyle("Italic")));
@@ -367,7 +343,7 @@ void CanvasComponent::drawGoniometer (juce::Graphics& g,
                 float r  = scopeHistory_[i][s].r;
                 float px = cx + (r - l) * sq2inv * radius;
                 float py = cy - (r + l) * sq2inv * radius;
-                p.addEllipse(px - 1.0f, py - 1.0f, 2.0f, 2.0f);
+                p.addRectangle(px - 1.0f, py - 1.0f, 2.0f, 2.0f);
             }
             g.setColour(col.withAlpha(alpha));
             g.fillPath(p);

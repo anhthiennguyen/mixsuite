@@ -81,5 +81,12 @@ private:
     DSPEngine  spatialDSP_;
     void pushSpatialParams();
 
+    // Cached raw param pointers — looked up once at construction, read on audio thread
+    std::array<std::atomic<float>*, kNumEQBands> pFreq_{}, pGain_{}, pQ_{}, pEnabled_{}, pType_{};
+
+    // Snapshot of values used to build the current coefficients — skip rebuild when unchanged
+    struct BandSnapshot { float freq = -1.f, gain = 0.f, q = 0.f; int type = -1; bool on = false, eqEn = false; };
+    std::array<BandSnapshot, kNumEQBands> lastBand_;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MixSuiteProcessor)
 };
